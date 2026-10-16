@@ -226,7 +226,9 @@ func (f *outboxFeed) drain(ctx context.Context, w http.ResponseWriter, rc *http.
 // for task.state_changed the top level keeps the shape the GUI already reads
 // (type task.transitioned, data.task_id, data.status, plus from/to and the
 // scheduler bridge's payload.to) and the full v1.1 event rides in Envelope.
-// Other kinds are sent under their own name with the payload as data.
+// A checkpoint.state_changed goes out under the name the GUI's banner already
+// listens for (checkpoint.emitted / .responded / .canceled) with correlation_id
+// and task_id. Other kinds are sent under their own name with the payload as data.
 func outboxFrame(r sqlstore.OutboxEvent) (SSEEvent, error) {
 	ev := r.Event
 	envelope, err := json.Marshal(ev)
@@ -263,6 +265,35 @@ func outboxFrame(r sqlstore.OutboxEvent) (SSEEvent, error) {
 			data["trigger"] = v
 		}
 		return SSEEvent{Type: "task.transitioned", Data: data, Timestamp: ts, Envelope: envelope}, nil
+	}
+	if string(ev.Kind) == "checkpoint.state_changed" {
+		entity, _ := payload["entity"].(map[string]interface{})
+		corr, _ := entity["id"].(string)
+		to, _ := payload["to"].(string)
+		from, _ := payload["from"].(string)
+		taskID := ""
+		if ev.Scope != nil {
+			taskID = ev.Scope.TaskID
+		}
+		data := map[string]interface{}{
+			"correlation_id": corr,
+			"task_id":        taskID,
+			"status":         to,
+			"from":           from,
+			"to":             to,
+		}
+		// The names the GUI's checkpoint banner already listens for. Other
+		// statuses (timed_out) go out under the event's own kind.
+		typ := string(ev.Kind)
+		switch to {
+		case "pending":
+			typ = "checkpoint.emitted"
+		case "responded":
+			typ = "checkpoint.responded"
+		case "canceled":
+			typ = "checkpoint.canceled"
+		}
+		return SSEEvent{Type: typ, Data: data, Timestamp: ts, Envelope: envelope}, nil
 	}
 	if payload == nil {
 		payload = map[string]interface{}{}

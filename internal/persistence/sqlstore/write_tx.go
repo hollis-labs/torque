@@ -136,6 +136,9 @@ func (w *WriteTx) CreateRun(r *RunRecord) (int64, error) {
 		return 0, err
 	}
 	r.ID = id
+	if err := w.RecordRunStateChange(id, r.TaskID, "", r.Status, "", r.Trigger); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 
@@ -180,6 +183,11 @@ func (w *WriteTx) CompleteRunWithCost(id int64, c RunCompletion, ledger *CostLed
 
 // completeRun reports whether the run row was updated.
 func (w *WriteTx) completeRun(id int64, c RunCompletion) (bool, error) {
+	// The status being replaced, for the state event. A missing row falls
+	// through to the UPDATE, which reports it.
+	var oldStatus, runTask string
+	_ = w.tx.QueryRow(`SELECT status, task_id FROM runs WHERE id = ?`, id).Scan(&oldStatus, &runTask)
+
 	var exitCode sql.NullInt64
 	if c.ExitCode != nil {
 		exitCode = sql.NullInt64{Int64: int64(*c.ExitCode), Valid: true}
@@ -211,6 +219,9 @@ func (w *WriteTx) completeRun(id int64, c RunCompletion) (bool, error) {
 		return false, err
 	}
 	if n > 0 {
+		if err := w.RecordRunStateChange(id, runTask, oldStatus, c.Status, c.ErrorMessage, c.Trigger); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 

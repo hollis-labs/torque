@@ -1,6 +1,7 @@
 package sqlstore
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -61,11 +62,23 @@ func scanCheckpoint(row interface {
 // CreateCheckpoint inserts a new pending checkpoint. Status defaults to
 // "pending" if empty. Populates cp.ID with the inserted row ID.
 func (s *Store) CreateCheckpoint(cp *CheckpointRecord) error {
+	return s.CreateCheckpointCtx(context.Background(), cp)
+}
+
+// CreateCheckpointCtx is CreateCheckpoint with the caller's context, which
+// supplies the trigger, trace and actor for the checkpoint.state_changed event
+// written in the same transaction.
+func (s *Store) CreateCheckpointCtx(ctx context.Context, cp *CheckpointRecord) error {
 	status := cp.Status
 	if status == "" {
 		status = "pending"
 	}
-	res, err := s.db.Exec(`
+	w, err := s.BeginWriteTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer w.Rollback()
+	res, err := w.tx.Exec(`
 		INSERT INTO checkpoints (task_id, run_id, correlation_id, type,
 			payload_json, emitter_source_type, emitter_source_ref, timeout_at, status)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -78,6 +91,12 @@ func (s *Store) CreateCheckpoint(cp *CheckpointRecord) error {
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
+		return err
+	}
+	if err := w.recordCheckpointState(cp.CorrelationID, cp.TaskID, "", status, "", Trigger{}); err != nil {
+		return err
+	}
+	if err := w.Commit(); err != nil {
 		return err
 	}
 	cp.ID = id
@@ -142,11 +161,36 @@ func (s *Store) ListPendingCheckpoints() ([]CheckpointRecord, error) {
 // terminal row returns ErrCheckpointNotFound to match the "not found in
 // respondable state" semantics callers expect.
 func (s *Store) RespondCheckpoint(correlationID, responseJSON, responderType, responderRef string, at time.Time) error {
-	res, err := s.db.Exec(`
-		UPDATE checkpoints SET status = 'responded', response_json = ?,
+	return s.RespondCheckpointCtx(context.Background(), correlationID, responseJSON, responderType, responderRef, at)
+}
+
+// RespondCheckpointCtx is RespondCheckpoint with the caller's context for the
+// checkpoint.state_changed event (the caller's trigger kind, ref
+// checkpoint:<correlation id>).
+func (s *Store) RespondCheckpointCtx(ctx context.Context, correlationID, responseJSON, responderType, responderRef string, at time.Time) error {
+	return s.closeCheckpoint(ctx, correlationID, "responded", responseJSON, responderType, responderRef, at)
+}
+
+// closeCheckpoint moves a pending checkpoint to a terminal status and records
+// the change in the same transaction.
+func (s *Store) closeCheckpoint(ctx context.Context, correlationID, status, responseJSON, responderType, responderRef string, at time.Time) error {
+	w, err := s.BeginWriteTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer w.Rollback()
+	var taskID string
+	if err := w.tx.QueryRow(`SELECT task_id FROM checkpoints WHERE correlation_id = ? AND status = 'pending'`, correlationID).Scan(&taskID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%s: %w", correlationID, ErrCheckpointNotFound)
+		}
+		return err
+	}
+	res, err := w.tx.Exec(`
+		UPDATE checkpoints SET status = ?, response_json = ?,
 			responder_source_type = ?, responder_source_ref = ?, responded_at = ?
 		WHERE correlation_id = ? AND status = 'pending'`,
-		responseJSON, responderType, nullableString(responderRef), at, correlationID,
+		status, responseJSON, responderType, nullableString(responderRef), at, correlationID,
 	)
 	if err != nil {
 		return err
@@ -155,31 +199,27 @@ func (s *Store) RespondCheckpoint(correlationID, responseJSON, responderType, re
 	if n == 0 {
 		return fmt.Errorf("%s: %w", correlationID, ErrCheckpointNotFound)
 	}
-	return nil
+	if err := w.recordCheckpointState(correlationID, taskID, "pending", status, "", Trigger{}); err != nil {
+		return err
+	}
+	return w.Commit()
 }
 
 // CancelCheckpoint marks a pending checkpoint "canceled" and records the
 // canceler as the responder along with a {canceled, reason} JSON body.
 // Returns ErrCheckpointNotFound if the row is not pending.
 func (s *Store) CancelCheckpoint(correlationID, reason, cancelerType, cancelerRef string, at time.Time) error {
+	return s.CancelCheckpointCtx(context.Background(), correlationID, reason, cancelerType, cancelerRef, at)
+}
+
+// CancelCheckpointCtx is CancelCheckpoint with the caller's context for the
+// checkpoint.state_changed event.
+func (s *Store) CancelCheckpointCtx(ctx context.Context, correlationID, reason, cancelerType, cancelerRef string, at time.Time) error {
 	body, err := json.Marshal(map[string]any{"canceled": true, "reason": reason})
 	if err != nil {
 		return err
 	}
-	res, err := s.db.Exec(`
-		UPDATE checkpoints SET status = 'canceled', response_json = ?,
-			responder_source_type = ?, responder_source_ref = ?, responded_at = ?
-		WHERE correlation_id = ? AND status = 'pending'`,
-		string(body), cancelerType, nullableString(cancelerRef), at, correlationID,
-	)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("%s: %w", correlationID, ErrCheckpointNotFound)
-	}
-	return nil
+	return s.closeCheckpoint(ctx, correlationID, "canceled", string(body), cancelerType, cancelerRef, at)
 }
 
 // SetCheckpointTimeout updates the timeout_at column for a checkpoint. Used
@@ -193,14 +233,50 @@ func (s *Store) SetCheckpointTimeout(correlationID string, at time.Time) error {
 // to "timed_out" and returns the number affected. Callers drive this on the
 // scheduler tick.
 func (s *Store) SweepTimedOutCheckpoints(now time.Time) (int, error) {
-	res, err := s.db.Exec(`
-		UPDATE checkpoints SET status = 'timed_out'
+	w, err := s.BeginWriteTx(context.Background())
+	if err != nil {
+		return 0, err
+	}
+	defer w.Rollback()
+	rows, err := w.tx.Query(`
+		SELECT correlation_id, task_id FROM checkpoints
 		WHERE status = 'pending' AND timeout_at IS NOT NULL AND timeout_at < ?`, now)
 	if err != nil {
 		return 0, err
 	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
+	type due struct{ corr, task string }
+	var dues []due
+	for rows.Next() {
+		var d due
+		if err := rows.Scan(&d.corr, &d.task); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		dues = append(dues, d)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	if len(dues) == 0 {
+		return 0, nil
+	}
+	if _, err := w.tx.Exec(`
+		UPDATE checkpoints SET status = 'timed_out'
+		WHERE status = 'pending' AND timeout_at IS NOT NULL AND timeout_at < ?`, now); err != nil {
+		return 0, err
+	}
+	for _, d := range dues {
+		if err := w.recordCheckpointState(d.corr, d.task, "pending", "timed_out", "",
+			Trigger{Kind: TriggerSystem, Ref: "checkpoint:" + d.corr}); err != nil {
+			return 0, err
+		}
+	}
+	if err := w.Commit(); err != nil {
+		return 0, err
+	}
+	return len(dues), nil
 }
 
 // MarkCheckpointEscalated records that the pending checkpoint id was

@@ -375,3 +375,53 @@ func (s *Store) signalOutbox() {
 // ResolveTrigger reports the trigger a state change made with ctx carries when
 // the caller passes none: the one ContextWithTrigger stamped, else system.
 func ResolveTrigger(ctx context.Context) Trigger { return resolveTrigger(ctx, TransitionOpts{}) }
+
+// trigger resolves the trigger for a change in w: the explicit one, else the
+// one the context carries, else system.
+func (w *WriteTx) trigger(explicit Trigger) Trigger {
+	return resolveTrigger(w.ctx, TransitionOpts{Trigger: explicit})
+}
+
+// scopeForTask reads the dimensions Torque can verify from the task row.
+func (w *WriteTx) scopeForTask(taskID string) stateScope {
+	var project, epic, sprint sql.NullString
+	_ = w.tx.QueryRow(`SELECT project_id, epic_id, sprint_id FROM tasks WHERE id = ?`, taskID).Scan(&project, &epic, &sprint)
+	return stateScope{ProjectID: project.String, EpicID: epic.String, SprintID: sprint.String, TaskID: taskID}
+}
+
+// RecordRunStateChange appends a run.state_changed event for a run whose
+// status the caller just wrote in this transaction (from is "" for a new
+// run). A change to the same status writes nothing. Callers that update the
+// runs row themselves use this so the event commits with the change; the
+// store's own run writes (CreateRun, CompleteRun, SetRunOperatorStatus) call
+// it for you. An empty trigger means the context's, else system.
+func (w *WriteTx) RecordRunStateChange(runID int64, taskID, from, to, reason string, trig Trigger) error {
+	scope := w.scopeForTask(taskID)
+	scope.RunID = sql.NullInt64{Int64: runID, Valid: true}
+	return w.appendStateEvent(stateChange{
+		EntityType: "run",
+		EntityID:   fmt.Sprintf("%d", runID),
+		From:       from,
+		To:         to,
+		Reason:     reason,
+		Trigger:    w.trigger(trig),
+		Scope:      scope,
+	})
+}
+
+// recordCheckpointState appends a checkpoint.state_changed event. The entity id
+// is the checkpoint's correlation id; the ref names it too.
+func (w *WriteTx) recordCheckpointState(corr, taskID, from, to, reason string, trig Trigger) error {
+	if trig.Kind == "" {
+		trig = TriggerWithRef(w.ctx, "checkpoint:"+corr)
+	}
+	return w.appendStateEvent(stateChange{
+		EntityType: "checkpoint",
+		EntityID:   corr,
+		From:       from,
+		To:         to,
+		Reason:     reason,
+		Trigger:    trig,
+		Scope:      w.scopeForTask(taskID),
+	})
+}

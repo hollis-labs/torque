@@ -783,6 +783,7 @@ func (s *Scheduler) reclaimRun(ctx context.Context, op string, runID int64, task
 			ErrorMessage:  message,
 			CostSource:    string(CostSourceNone), // a reclaimed run has no usage to price
 			OnlyIfRunning: true,
+			Trigger:       schedulerTrigger,
 		}, nil)
 		if err != nil || !updated {
 			return err
@@ -1153,6 +1154,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 			Status:          "running",
 			ProfileSnapshot: profileSnapshotStr,
 			ProgressDetail:  sql.NullString{String: launchDetail, Valid: launchDetail != ""},
+			Trigger:         schedulerTrigger,
 		})
 
 		if err != nil {
@@ -1580,6 +1582,7 @@ func (s *Scheduler) handlePermanentValidationError(task sqlstore.TaskRecord, ver
 			Status:          "blocked",
 			ErrorMessage:    reason,
 			ProfileSnapshot: profileSnapshotStr,
+			Trigger:         schedulerTrigger,
 		})
 
 		if err != nil {

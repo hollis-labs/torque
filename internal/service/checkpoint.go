@@ -186,6 +186,13 @@ type CheckpointCancelInput struct {
 // already in review on a prior correlation, BlockedReason is preserved so
 // respond/cancel still match the original correlation_id.
 func (s *CheckpointService) Emit(in CheckpointEmitInput) (*CheckpointEmitOutput, error) {
+	return s.EmitContext(context.Background(), in)
+}
+
+// EmitContext is Emit with the caller's context: it supplies the trigger kind
+// (agent over MCP, human or agent over HTTP), trace and actor recorded on the
+// checkpoint.state_changed and task.state_changed events the emit writes.
+func (s *CheckpointService) EmitContext(ctx context.Context, in CheckpointEmitInput) (*CheckpointEmitOutput, error) {
 	if in.TaskID == "" {
 		return nil, &ValidationError{Field: "task_id", Message: "task_id required"}
 	}
@@ -230,7 +237,7 @@ func (s *CheckpointService) Emit(in CheckpointEmitInput) (*CheckpointEmitOutput,
 		cp.TimeoutAt.Time = *in.TimeoutAt
 		cp.TimeoutAt.Valid = true
 	}
-	if err := s.store.CreateCheckpoint(cp); err != nil {
+	if err := s.store.CreateCheckpointCtx(ctx, cp); err != nil {
 		return nil, fmt.Errorf("create checkpoint: %w", err)
 	}
 
@@ -239,7 +246,7 @@ func (s *CheckpointService) Emit(in CheckpointEmitInput) (*CheckpointEmitOutput,
 	// recorded either way, and callers who care can inspect task state
 	// after the fact.
 	reason := "awaiting checkpoint " + corr
-	if _, err := s.store.ParkTaskOnCheckpointRef(context.Background(), in.TaskID, reason, "checkpoint:"+corr); err != nil {
+	if _, err := s.store.ParkTaskOnCheckpointRef(ctx, in.TaskID, reason, "checkpoint:"+corr); err != nil {
 		return nil, fmt.Errorf("park task on checkpoint: %w", err)
 	}
 
@@ -302,7 +309,7 @@ func (s *CheckpointService) Respond(ctx context.Context, in CheckpointRespondInp
 	if err := validateRequiredWorkflowResponse(task, cp, in.ResponderSourceType); err != nil {
 		return err
 	}
-	if err := s.store.RespondCheckpoint(
+	if err := s.store.RespondCheckpointCtx(ctx,
 		in.CorrelationID, in.ResponseJSON,
 		in.ResponderSourceType, in.ResponderSourceRef,
 		time.Now().UTC(),
@@ -555,7 +562,7 @@ func (s *CheckpointService) Cancel(ctx context.Context, in CheckpointCancelInput
 	if cp.Status != "pending" {
 		return &ConflictError{Message: "checkpoint " + cp.Status}
 	}
-	if err := s.store.CancelCheckpoint(
+	if err := s.store.CancelCheckpointCtx(ctx,
 		in.CorrelationID, in.Reason,
 		in.CancelerSourceType, in.CancelerSourceRef,
 		time.Now().UTC(),

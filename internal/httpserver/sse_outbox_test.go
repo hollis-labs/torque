@@ -320,3 +320,54 @@ func TestEventsOutbox_HTTPTransitionEmitsOnceNoDirectBroadcast(t *testing.T) {
 	f = next(t, ch, "task.transitioned")
 	assert.Equal(t, "agent", triggerKind(f), "an unmarked API call is an agent call")
 }
+
+func TestEventsOutbox_CheckpointFramesKeepTheNamesTheBannerListensFor(t *testing.T) {
+	e := setupOutboxServer(t)
+	require.NoError(t, e.store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-SSE-0060", Title: "t", Priority: 2, Kind: "decision", Status: "doing",
+		CheckpointMode: "blocking", OnCheckpointResponse: "resume", Manual: true,
+		OnDone: "review", OnFail: "retry", OnReview: "pause", OnDoneMerge: "none", SourceType: "user", Trust: "normal",
+	}))
+	ch := e.stream(t, "")
+	next(t, ch, "connected")
+
+	resp, err := http.Post(e.ts.URL+"/api/v1/checkpoints", "application/json",
+		strings.NewReader(`{"task_id":"CW-SSE-0060","type":"approval","payload_json":"{}"}`))
+	require.NoError(t, err)
+	var cp struct {
+		CorrelationID string `json:"correlation_id"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&cp))
+	resp.Body.Close()
+	require.NotEmpty(t, cp.CorrelationID)
+
+	emitted := next(t, ch, "checkpoint.emitted")
+	assert.Equal(t, cp.CorrelationID, emitted.Data["correlation_id"])
+	assert.Equal(t, "CW-SSE-0060", emitted.Data["task_id"])
+	assert.Regexp(t, `^\d+:\d+$`, emitted.ID)
+	assert.Equal(t, "checkpoint.state_changed", emitted.Envelope["kind"])
+	parked := next(t, ch, "task.transitioned") // the park, from the same emit
+	assert.Equal(t, "review", parked.Data["status"])
+	noFrame(t, ch, "checkpoint.emitted", 300*time.Millisecond) // once, not twice
+
+	resp, err = http.Post(e.ts.URL+"/api/v1/checkpoints/"+cp.CorrelationID+"/respond", "application/json",
+		strings.NewReader(`{"response_json":"{\"answer\":\"yes\"}","responder_source_type":"user"}`))
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	responded := next(t, ch, "checkpoint.responded")
+	assert.Equal(t, cp.CorrelationID, responded.Data["correlation_id"])
+	noFrame(t, ch, "checkpoint.responded", 300*time.Millisecond)
+}
+
+func TestEventsOutbox_RunFramesUseTheEventKind(t *testing.T) {
+	e := setupOutboxServer(t)
+	seedTask(t, e, "CW-SSE-0070")
+	ch := e.stream(t, "")
+	next(t, ch, "connected")
+	_, err := e.store.CreateRun(&sqlstore.RunRecord{TaskID: "CW-SSE-0070", Executor: "cli"})
+	require.NoError(t, err)
+	f := next(t, ch, "run.state_changed")
+	assert.Equal(t, "running", f.Data["to"])
+	assert.Equal(t, "run.state_changed", f.Envelope["kind"])
+}

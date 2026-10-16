@@ -3,12 +3,16 @@ package sqlstore
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
 
 // RunRecord mirrors the runs table row.
 type RunRecord struct {
+	// Trigger says what caused the run to start, for the run.state_changed
+	// event. It is not stored. Zero means the context's, else system.
+	Trigger Trigger
 	// Correlation is populated only from a verified Tether binding.
 	TetherSessionID sql.NullString
 	LaunchID        sql.NullString
@@ -54,6 +58,9 @@ type RunCompletion struct {
 	// finished between its check and its write keeps its status, tokens and
 	// cost instead of being reset (CW-20260912-0003).
 	OnlyIfRunning bool
+	// Trigger says what caused the completion, for the run.state_changed
+	// event. Zero means the context's, else system.
+	Trigger Trigger
 }
 
 // TaskRunAggregate is the per-task roll-up of run counts, token usage, and
@@ -247,19 +254,26 @@ func (s *Store) SetRunOperatorStatus(id int64, status, reason string) error {
 	if !IsOperatorTerminalRunStatus(status) {
 		return fmt.Errorf("SetRunOperatorStatus: %q is not an operator-terminal status", status)
 	}
+	w, err := s.BeginWriteTx(context.Background())
+	if err != nil {
+		return err
+	}
+	defer w.Rollback()
+	var oldStatus, taskID string
+	if err := w.tx.QueryRow(`SELECT status, task_id FROM runs WHERE id = ?`, id).Scan(&oldStatus, &taskID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("run %d not found", id)
+		}
+		return err
+	}
 	const q = `UPDATE runs SET status = ?, ended_at = ?, error_message = ? WHERE id = ?`
-	res, err := s.db.Exec(q, status, time.Now().UTC(), reason, id)
-	if err != nil {
+	if _, err := w.tx.Exec(q, status, time.Now().UTC(), reason, id); err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
+	if err := w.RecordRunStateChange(id, taskID, oldStatus, status, reason, Trigger{Kind: TriggerSystem, Ref: "run.operator"}); err != nil {
 		return err
 	}
-	if n == 0 {
-		return fmt.Errorf("run %d not found", id)
-	}
-	return nil
+	return w.Commit()
 }
 
 // CompleteRun updates a run's terminal state. If the run has already been
@@ -271,41 +285,16 @@ func (s *Store) SetRunOperatorStatus(id int64, status, reason string) error {
 // would be misleading. Returns nil for the skipped case so callers treat
 // it as a successful no-op.
 func (s *Store) CompleteRun(id int64, c RunCompletion) error {
-	var exitCode sql.NullInt64
-	if c.ExitCode != nil {
-		exitCode = sql.NullInt64{Int64: int64(*c.ExitCode), Valid: true}
-	}
-
-	// WHERE-clause guard: only update if the current status is running or
-	// already matches a non-operator terminal. Operator-terminal statuses
-	// are excluded so the late-arriving executor result cannot clobber them.
-	const q = `UPDATE runs SET status = ?, ended_at = ?, prompt_tokens = ?,
-		completion_tokens = ?, cost = ?, exit_code = ?, error_message = ?,
-		cache_read_tokens = ?, cache_write_tokens = ?, cost_source = ?
-		WHERE id = ? AND status NOT IN ('cancelled','superseded','killed')`
-
-	res, err := s.db.Exec(q,
-		c.Status, time.Now().UTC(),
-		c.PromptTokens, c.CompletionTokens, c.Cost,
-		exitCode, c.ErrorMessage,
-		c.CacheReadTokens, c.CacheWriteTokens, c.CostSource,
-		id,
-	)
+	// One write path: the WriteTx variant applies the same guard (operator
+	// -terminal runs are left alone) and appends the run.state_changed event
+	// in the same transaction.
+	w, err := s.BeginWriteTx(context.Background())
 	if err != nil {
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
+	defer w.Rollback()
+	if _, err := w.completeRun(id, c); err != nil {
 		return err
 	}
-	if n == 0 {
-		// Distinguish "not found" from "operator-locked". GetRun is cheap
-		// and only happens on this cold path.
-		if _, gerr := s.GetRun(id); gerr != nil {
-			return fmt.Errorf("run %d not found", id)
-		}
-		// Run exists but is operator-terminal — no-op.
-		return nil
-	}
-	return nil
+	return w.Commit()
 }

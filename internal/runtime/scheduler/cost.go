@@ -321,7 +321,7 @@ func usageOrNil(result *executor.ExecutionResult) *executor.ExecutionResult {
 // usage records the same fields the same way. The ledger record is nil when
 // result is nil.
 func (s *Scheduler) costWrite(task *sqlstore.TaskRecord, result *executor.ExecutionResult, status, reason string) (sqlstore.RunCompletion, *sqlstore.CostLedgerRecord, ResolvedCost) {
-	comp := sqlstore.RunCompletion{Status: status, ErrorMessage: reason}
+	comp := sqlstore.RunCompletion{Status: status, ErrorMessage: reason, Trigger: schedulerTrigger}
 	if result == nil {
 		// A run that ended without usage is `none`, as one completed without
 		// tokens is; it has no ledger row, so runs.cost and the ledger agree at 0.

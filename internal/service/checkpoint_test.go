@@ -975,7 +975,7 @@ func TestCheckpointService_StateEventsCarryTriggerAndCheckpointRef(t *testing.T)
 		require.NoError(t, store.DB().QueryRow(
 			`SELECT trigger_kind, json_extract(json_extract(envelope, '$.payload'), '$.trigger.ref'),
 			        json_extract(json_extract(envelope, '$.payload'), '$.to')
-			 FROM event_outbox WHERE task_id = ? ORDER BY seq DESC LIMIT 1`, taskID).Scan(&kind, &ref, &to))
+			 FROM event_outbox WHERE task_id = ? AND entity_type = 'task' ORDER BY seq DESC LIMIT 1`, taskID).Scan(&kind, &ref, &to))
 		return
 	}
 
@@ -1000,7 +1000,7 @@ func TestCheckpointService_StateEventsCarryTriggerAndCheckpointRef(t *testing.T)
 	})
 	require.NoError(t, err)
 	count := func() (n int) {
-		require.NoError(t, store.DB().QueryRow(`SELECT COUNT(*) FROM event_outbox WHERE task_id = ?`, task2).Scan(&n))
+		require.NoError(t, store.DB().QueryRow(`SELECT COUNT(*) FROM event_outbox WHERE task_id = ? AND entity_type = 'task'`, task2).Scan(&n))
 		return
 	}
 	before := count()

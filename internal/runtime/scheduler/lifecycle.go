@@ -437,8 +437,14 @@ func isTerminalTaskStatus(status string) bool {
 func (lm *LifecycleManager) markRunSuperseded(task *sqlstore.TaskRecord, runID int64, result *executor.ExecutionResult) error {
 	if runID > 0 {
 		if err := lm.stateWriter.Submit(context.Background(), "lifecycle_run_superseded", func(tx *sqlstore.WriteTx) error {
-			_, err := tx.Exec(`UPDATE runs SET status = ? WHERE id = ?`, "superseded", runID)
-			return err
+			var oldStatus, taskID string
+			if err := tx.QueryRow(`SELECT status, task_id FROM runs WHERE id = ?`, runID).Scan(&oldStatus, &taskID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE runs SET status = ? WHERE id = ?`, "superseded", runID); err != nil {
+				return err
+			}
+			return tx.RecordRunStateChange(runID, taskID, oldStatus, "superseded", "", schedulerTrigger)
 		}); err != nil {
 			log.Printf("[lifecycle] mark run %d superseded: %v", runID, err)
 		}
