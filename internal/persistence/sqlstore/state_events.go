@@ -308,7 +308,12 @@ func nullIfEmpty(s string) sql.NullString {
 // not the submitter's.
 func (w *WriteTx) eventCorr(sp eventSpec) *runtimeevents.Corr {
 	corr := &runtimeevents.Corr{CausationID: sp.Causation, IdempotencyKey: sp.IdempotencyKey}
-	if sp.Scope.TaskID != "" {
+	// The correlation group is the run when there is one (the task is already
+	// in scope.task_id), else the task.
+	switch {
+	case sp.Scope.RunID.Valid:
+		corr.CorrelationID = fmt.Sprintf("%d", sp.Scope.RunID.Int64)
+	case sp.Scope.TaskID != "":
 		corr.CorrelationID = sp.Scope.TaskID
 	}
 	if sc := trace.SpanContextFromContext(w.ctx); sc.IsValid() {
