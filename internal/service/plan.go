@@ -314,6 +314,29 @@ func (s *PlanService) RemovePhase(planID, phaseID string) error {
 	return nil
 }
 
+// ReopenPhase reopens a completed phase: it returns to started and its
+// lifecycle generation goes up by one. Only a completed phase can be reopened
+// (a ConflictError otherwise). Do it before adding or reactivating work in the
+// phase; a completed phase does not revert on its own.
+func (s *PlanService) ReopenPhase(planID, phaseID string) (PlanPhase, error) {
+	if phaseID == "" {
+		return PlanPhase{}, &ValidationError{Field: "phase_id", Message: "phase_id is required"}
+	}
+	if _, err := s.requirePlan(planID); err != nil {
+		return PlanPhase{}, err
+	}
+	r, err := s.store.ReopenPlanPhase(context.Background(), planID, phaseID)
+	switch {
+	case errors.Is(err, sqlstore.ErrPhaseNotFound):
+		return PlanPhase{}, &ValidationError{Field: "phase_id", Message: "phase not found: " + phaseID}
+	case errors.Is(err, sqlstore.ErrPhaseNotCompleted):
+		return PlanPhase{}, &ConflictError{Message: fmt.Sprintf("cannot reopen phase %s: it is %s, not completed", phaseID, r.State)}
+	case err != nil:
+		return PlanPhase{}, err
+	}
+	return PlanPhase{ID: r.PhaseID, Name: r.Name, Order: r.Order, Acceptance: r.Acceptance, State: r.State, Generation: r.Generation}, nil
+}
+
 // ListChildren returns tasks whose parent_id = planID, optionally narrowed to
 // a specific phase_id. Pass empty phaseID to return all children.
 func (s *PlanService) ListChildren(planID, phaseID string) ([]sqlstore.TaskRecord, error) {
