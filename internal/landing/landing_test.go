@@ -102,3 +102,39 @@ func TestCheckClean(t *testing.T) {
 		t.Fatalf("dirty repo: %v", got)
 	}
 }
+
+// Undecided separates "could not tell yet" from "plainly unmet": it is set only
+// when every missing requirement is of the first kind.
+func TestEvaluateUndecided(t *testing.T) {
+	ctxb := context.Background()
+	ci := Policy{QualityGates: []string{GateCIGreen}}
+	cases := []struct {
+		name string
+		sc   SourceControl
+		p    Policy
+		ev   Evidence
+		want bool
+	}{
+		{"pr unreadable", fakeSC{err: errors.New("boom")}, Policy{OnDoneMerge: "pr"}, Evidence{PRURL: "u"}, true},
+		{"no adapter", nil, Policy{OnDoneMerge: "pr"}, Evidence{PRURL: "u"}, true},
+		{"ci unfinished", fakeSC{pr: PRState{State: "OPEN", Checks: []Check{{"build", ""}}}}, ci, Evidence{PRURL: "u"}, true},
+		{"no ci checks yet", fakeSC{pr: PRState{State: "OPEN"}}, ci, Evidence{PRURL: "u"}, true},
+		{"no pr recorded", fakeSC{}, Policy{OnDoneMerge: "pr"}, Evidence{}, false},
+		{"pr open", fakeSC{pr: PRState{State: "OPEN"}}, Policy{OnDoneMerge: "pr"}, Evidence{PRURL: "u"}, false},
+		{"ci red", fakeSC{pr: PRState{State: "MERGED", Checks: []Check{{"build", "FAILURE"}}}}, ci, Evidence{PRURL: "u"}, false},
+		{"unfinished and red", fakeSC{pr: PRState{State: "MERGED", Checks: []Check{{"a", ""}, {"b", "FAILURE"}}}}, ci, Evidence{PRURL: "u"}, false},
+		{"unfinished but pr open", fakeSC{pr: PRState{State: "OPEN", Checks: []Check{{"a", ""}}}}, Policy{OnDoneMerge: "pr", QualityGates: []string{GateCIGreen}}, Evidence{PRURL: "u"}, false},
+	}
+	for _, c := range cases {
+		v := Evaluate(ctxb, c.sc, c.p, c.ev)
+		if v.OK {
+			t.Errorf("%s: unexpectedly OK", c.name)
+		}
+		if v.Undecided != c.want {
+			t.Errorf("%s: Undecided=%v, want %v (missing %v)", c.name, v.Undecided, c.want, v.Missing)
+		}
+	}
+	if v := Evaluate(ctxb, nil, Policy{OnDoneMerge: "none"}, Evidence{}); v.Undecided {
+		t.Error("a satisfied gate is not undecided")
+	}
+}

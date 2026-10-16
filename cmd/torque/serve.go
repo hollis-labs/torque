@@ -235,6 +235,7 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	sched := scheduler.New(store, q, registry, predicates, &cfg.Scheduler)
 	sched.SetTelemetryWriter(telemetryWriter)
 	sched.SetLandingGate(svc.Task.LandingCheck)
+	sched.SetLandingEvaluator(svc.Task.LandingEvaluate)
 	svc.Workstream.SetGo(sched.Enabled)
 	// Tether reads (capacity, team-run state) are consulted only when
 	// TORQUE_TETHER_URL is set; Tether has not shipped them yet (CW-20261011-0015).
