@@ -1,6 +1,7 @@
 package sqlstore
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -371,7 +372,6 @@ type TaskUpdate struct {
 
 	Title             *string
 	Description       *string
-	Status            *string
 	Priority          *int
 	Manual            *bool
 	Executor          *string
@@ -1232,10 +1232,6 @@ func updateTaskExec(ex dbExecer, id string, u TaskUpdate) error {
 		setClauses = append(setClauses, "description = ?")
 		args = append(args, *u.Description)
 	}
-	if u.Status != nil {
-		setClauses = append(setClauses, "status = ?")
-		args = append(args, *u.Status)
-	}
 	if u.Priority != nil {
 		setClauses = append(setClauses, "priority = ?")
 		args = append(args, *u.Priority)
@@ -1417,88 +1413,38 @@ func updateTaskExec(ex dbExecer, id string, u TaskUpdate) error {
 	return nil
 }
 
-// TransitionTask sets a new status on the task. After a successful UPDATE,
-// any task-transition hooks registered via RegisterTaskTransitionHook are
-// invoked with the old/new status. The old status is read in the same
-// transaction as the UPDATE so the hook payload always reflects the actual
-// DB transition and no intermediate write can slip between read and update.
+// TransitionTask sets a new status on the task. The state event is written in
+// the same transaction as the UPDATE (event_outbox); after commit, any
+// task-transition hooks registered via RegisterTaskTransitionHook are invoked
+// with the old/new status. The old status is read in the same transaction as
+// the UPDATE so the payload always reflects the actual DB transition and no
+// intermediate write can slip between read and update.
 func (s *Store) TransitionTask(id, newStatus string) error {
-	oldStatus, err := s.transitionTaskTx(id, newStatus, nil)
-	if err != nil {
-		return err
-	}
-	s.emitTaskTransition(TaskTransitionEvent{
-		TaskID:    id,
-		OldStatus: oldStatus,
-		NewStatus: newStatus,
-	})
-	return nil
+	return s.TransitionTaskOpts(context.Background(), id, newStatus, TransitionOpts{})
 }
 
 // TransitionTaskWithReason sets a new status and blocked_reason atomically.
 // Used by the scheduler when parking tasks on blocking checkpoints or when
 // sweeping timed-out checkpoints — both cases need the status and the
-// explanatory reason set together. Emits a task-transition hook after a
-// successful UPDATE, same as TransitionTask.
+// explanatory reason set together. Same event and hook behaviour as
+// TransitionTask.
 func (s *Store) TransitionTaskWithReason(id, newStatus, reason string) error {
-	r := reason
-	oldStatus, err := s.transitionTaskTx(id, newStatus, &r)
+	return s.TransitionTaskOpts(context.Background(), id, newStatus, TransitionOpts{Reason: &reason})
+}
+
+// TransitionTaskOpts is TransitionTask with the trigger, forced flag, guard and
+// reason the state event needs. ctx supplies the trigger (ContextWithTrigger),
+// the verified principal and the trace; opts.Trigger wins over the context.
+func (s *Store) TransitionTaskOpts(ctx context.Context, id, newStatus string, o TransitionOpts) error {
+	w, err := s.BeginWriteTx(ctx)
 	if err != nil {
 		return err
 	}
-	s.emitTaskTransition(TaskTransitionEvent{
-		TaskID:    id,
-		OldStatus: oldStatus,
-		NewStatus: newStatus,
-		Reason:    reason,
-	})
-	return nil
-}
-
-// transitionTaskTx runs the SELECT-then-UPDATE under a single transaction so
-// the old status we hand to the transition hook is the exact value the
-// UPDATE replaced. Pass reason=nil to skip the blocked_reason column.
-func (s *Store) transitionTaskTx(id, newStatus string, reason *string) (string, error) {
-	tx, err := s.beginWriteTx()
-	if err != nil {
-		return "", err
+	defer w.Rollback()
+	if err := w.TransitionTaskOpts(id, newStatus, o); err != nil {
+		return err
 	}
-	defer tx.Rollback()
-
-	var oldStatus string
-	if err := tx.QueryRow(`SELECT status FROM tasks WHERE id = ?`, id).Scan(&oldStatus); err != nil {
-		if err == sql.ErrNoRows {
-			return "", fmt.Errorf("task %s not found", id)
-		}
-		return "", err
-	}
-
-	var res sql.Result
-	if reason != nil {
-		res, err = tx.Exec(
-			`UPDATE tasks SET status = ?, blocked_reason = ?, updated_at = ? WHERE id = ?`,
-			newStatus, *reason, updatedAtNow(), id,
-		)
-	} else {
-		res, err = tx.Exec(
-			`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
-			newStatus, updatedAtNow(), id,
-		)
-	}
-	if err != nil {
-		return "", err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return "", err
-	}
-	if n == 0 {
-		return "", fmt.Errorf("task %s not found", id)
-	}
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
-	return oldStatus, nil
+	return w.Commit()
 }
 
 // ParkTaskOnCheckpoint atomically transitions a task from "doing" to "review"
@@ -1511,8 +1457,23 @@ func (s *Store) transitionTaskTx(id, newStatus string, reason *string) (string, 
 // risking a clobber of a BlockedReason that another actor wrote between
 // the caller's GetTask and the UPDATE — i.e. the classic TOCTOU
 // race-condition avoidance.
+//
+// The state event is appended in the same transaction, and only when the
+// predicate matched.
 func (s *Store) ParkTaskOnCheckpoint(id, reason string) (bool, error) {
-	res, err := s.db.Exec(
+	return s.ParkTaskOnCheckpointRef(context.Background(), id, reason, "checkpoint.park")
+}
+
+// ParkTaskOnCheckpointRef is ParkTaskOnCheckpoint with the context for trace
+// and actor, and ref naming the checkpoint that caused the park (it becomes
+// the event's trigger.ref).
+func (s *Store) ParkTaskOnCheckpointRef(ctx context.Context, id, reason, ref string) (bool, error) {
+	w, err := s.BeginWriteTx(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer w.Rollback()
+	res, err := w.tx.Exec(
 		`UPDATE tasks SET status = 'review', blocked_reason = ?, updated_at = ?
 		 WHERE id = ? AND status = 'doing' AND checkpoint_mode = 'blocking'`,
 		reason, updatedAtNow(), id,
@@ -1524,19 +1485,40 @@ func (s *Store) ParkTaskOnCheckpoint(id, reason string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if n > 0 {
-		// Park is always doing → review for a blocking-mode task. Fire the
-		// transition hook so scheduler observers (worker cancel registry)
-		// see the same event shape as plain TransitionTask. Avoids a silent
-		// gap where a parked checkpoint leaves a worker running.
-		s.emitTaskTransition(TaskTransitionEvent{
-			TaskID:    id,
-			OldStatus: "doing",
-			NewStatus: "review",
-			Reason:    reason,
-		})
+	if n == 0 {
+		return false, nil
 	}
-	return n > 0, nil
+	var project, epic, sprint sql.NullString
+	if err := w.tx.QueryRow(
+		`SELECT project_id, epic_id, sprint_id FROM tasks WHERE id = ?`, id,
+	).Scan(&project, &epic, &sprint); err != nil {
+		return false, err
+	}
+	// Park is always doing → review for a blocking-mode task.
+	if err := w.appendStateEvent(stateChange{
+		EntityType: "task",
+		EntityID:   id,
+		From:       "doing",
+		To:         "review",
+		Reason:     reason,
+		Trigger:    Trigger{Kind: TriggerSystem, Ref: ref},
+		Scope:      stateScope{ProjectID: project.String, EpicID: epic.String, SprintID: sprint.String, TaskID: id},
+	}); err != nil {
+		return false, err
+	}
+	if err := w.Commit(); err != nil {
+		return false, err
+	}
+	// Fire the transition hook so scheduler observers (worker cancel registry)
+	// see the same event shape as plain TransitionTask. Avoids a silent gap
+	// where a parked checkpoint leaves a worker running.
+	s.emitTaskTransition(TaskTransitionEvent{
+		TaskID:    id,
+		OldStatus: "doing",
+		NewStatus: "review",
+		Reason:    reason,
+	})
+	return true, nil
 }
 
 // DeleteTask removes a task by ID.

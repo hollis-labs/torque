@@ -117,6 +117,15 @@ export interface RunTimeSeries {
   totals: Omit<RunTimeBucket, 'start' | 'status_counts'>
 }
 
+/**
+ * Marks every request as made by the GUI. The server records a state change
+ * (a task transition, a checkpoint answer) as a human one only when this
+ * header is present; an unmarked API call is recorded as an agent's. The
+ * header is X-Client: browser, the one the planner already keys on. Send it on
+ * every fetch, reads included, so a future write path cannot forget it.
+ */
+export const GUI_CLIENT_HEADERS: Record<string, string> = { 'X-Client': 'browser' }
+
 export class ApiError extends Error {
   status: number
   url?: string
@@ -314,14 +323,14 @@ export class TorqueApiClient {
       const qs = search.toString()
       if (qs) url += `?${qs}`
     }
-    const res = await fetch(url, { headers: { 'Accept': 'application/json' }, signal })
+    const res = await fetch(url, { headers: { 'Accept': 'application/json', ...GUI_CLIENT_HEADERS }, signal })
     return parseResponse<T>(res)
   }
 
   private async post<T>(path: string, body?: unknown): Promise<T> {
     const res = await fetch(this.url(path), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...GUI_CLIENT_HEADERS },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
     return parseResponse<T>(res)
@@ -330,7 +339,7 @@ export class TorqueApiClient {
   private async patch<T>(path: string, body: unknown): Promise<T> {
     const res = await fetch(this.url(path), {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...GUI_CLIENT_HEADERS },
       body: JSON.stringify(body),
     })
     return parseResponse<T>(res)
@@ -339,7 +348,7 @@ export class TorqueApiClient {
   private async put<T>(path: string, body: unknown): Promise<T> {
     const res = await fetch(this.url(path), {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...GUI_CLIENT_HEADERS },
       body: JSON.stringify(body),
     })
     return parseResponse<T>(res)
@@ -348,7 +357,7 @@ export class TorqueApiClient {
   private async delete<T>(path: string, body?: unknown): Promise<T> {
     const res = await fetch(this.url(path), {
       method: 'DELETE',
-      headers: { 'Accept': 'application/json', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { 'Accept': 'application/json', ...GUI_CLIENT_HEADERS, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
     return parseResponse<T>(res)
@@ -633,7 +642,7 @@ export class TorqueApiClient {
   private async judgeSend<T>(path: string, body?: unknown): Promise<T> {
     const res = await fetch(this.url(path), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Client': 'browser' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...GUI_CLIENT_HEADERS },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
     return parseResponse<T>(res)
@@ -753,7 +762,7 @@ export class TorqueApiClient {
   private async plannerSend<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
     const res = await fetch(this.url(`/planner${path}`), {
       method,
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Client': 'browser' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...GUI_CLIENT_HEADERS },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
     return parseResponse<T>(res)

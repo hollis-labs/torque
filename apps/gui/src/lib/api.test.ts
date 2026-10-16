@@ -139,7 +139,7 @@ describe('TorqueApiClient.setSetting', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/settings/features.projects', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Client': 'browser' },
       body: JSON.stringify({ value: 'true' }),
     })
   })
@@ -187,7 +187,7 @@ describe('TorqueApiClient.emitCheckpoint', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/checkpoints', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'X-Client': 'browser' },
       body: JSON.stringify({
         task_id: 'TASK-1',
         type: 'approval',
@@ -721,5 +721,20 @@ describe('plan phase normalization', () => {
     const client = new TorqueApiClient('/api/v1')
     expect((await client.getPlan('PLAN-1')).plan.phases).toEqual([phase])
     expect((await client.createPlan({ title: 'New plan' })).plan.phases).toEqual([])
+  })
+})
+
+
+describe('GUI marker', () => {
+  it('every request names the GUI so the server records its changes as human', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: 'T-1' }))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    const c = new TorqueApiClient('/api/v1')
+    await c.transitionTask('T-1', 'doing').catch(() => undefined)
+    await c.getTask('T-1').catch(() => undefined)
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2)
+    for (const [, init] of fetchMock.mock.calls) {
+      expect((init as RequestInit).headers).toMatchObject({ 'X-Client': 'browser' })
+    }
   })
 })

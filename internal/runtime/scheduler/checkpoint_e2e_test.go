@@ -183,7 +183,7 @@ func TestE2E_Checkpoint_Cancel_TaskStaysInReview(t *testing.T) {
 	require.NoError(t, err)
 	corr := out.CorrelationID
 
-	require.NoError(t, svc.Checkpoint.Cancel(service.CheckpointCancelInput{
+	require.NoError(t, svc.Checkpoint.Cancel(context.Background(), service.CheckpointCancelInput{
 		CorrelationID:      corr,
 		Reason:             "no longer relevant",
 		CancelerSourceType: "user",

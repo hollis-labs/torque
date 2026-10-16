@@ -727,7 +727,7 @@ func (s *Scheduler) recoverStuckTask(ctx context.Context, mode healthscan.Mode, 
 	// is still in `doing`; the TransitionTask path enforces the
 	// state-machine invariant a second time on its own.
 	if err := s.stateWriter.Submit(ctx, "scheduler_stuck_task_requeue", func(tx *sqlstore.WriteTx) error {
-		return tx.TransitionTask(a.TaskID, "todo")
+		return tx.TransitionTaskOpts(a.TaskID, "todo", schedPlain())
 	}); err != nil {
 		log.Printf("[healthscan] %s recovery: transition %s doing→todo: %v",
 			mode, a.TaskID, err)
@@ -873,7 +873,7 @@ func (s *Scheduler) recoverOrphanRun(ctx context.Context, mode healthscan.Mode, 
 				mode, a.TaskID, a.RunID, terr)
 		} else if task.Status == "doing" {
 			if err := s.stateWriter.Submit(ctx, "scheduler_orphan_run_requeue", func(tx *sqlstore.WriteTx) error {
-				return tx.TransitionTask(a.TaskID, "todo")
+				return tx.TransitionTaskOpts(a.TaskID, "todo", schedPlain())
 			}); err != nil {
 				log.Printf("[healthscan] %s recovery: transition %s doing→todo (orphan run %d): %v",
 					mode, a.TaskID, a.RunID, err)
@@ -971,7 +971,7 @@ func (s *Scheduler) recoverOrphanedWorker(ctx context.Context, w StaleWorker) {
 		log.Printf("[scheduler] orphan recovery: %s left alone, its run finished first", w.TaskID)
 	} else if task.Status == "doing" {
 		if err := s.stateWriter.Submit(ctx, "scheduler_orphan_requeue", func(tx *sqlstore.WriteTx) error {
-			return tx.TransitionTask(w.TaskID, "todo")
+			return tx.TransitionTaskOpts(w.TaskID, "todo", schedPlain())
 		}); err != nil {
 			log.Printf("[scheduler] orphan recovery: transition %s doing→todo: %v", w.TaskID, err)
 		} else {
@@ -1111,7 +1111,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 
 	var runID int64
 	if err := s.stateWriter.Submit(ctx, "scheduler_dispatch", func(tx *sqlstore.WriteTx) error {
-		if err := tx.TransitionTask(task.ID, "doing"); err != nil {
+		if err := tx.TransitionTaskOpts(task.ID, "doing", schedPlain()); err != nil {
 			return fmt.Errorf("transition to doing: %w", err)
 		}
 		var err error
@@ -1372,7 +1372,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 				if taskStatus != "doing" || manual != 0 || newerRuns != 0 {
 					return nil
 				}
-				if err := tx.TransitionTaskWithReason(capturedTaskID, "blocked", reason); err != nil {
+				if err := tx.TransitionTaskOpts(capturedTaskID, "blocked", schedReason(reason)); err != nil {
 					return err
 				}
 				return nil
@@ -1577,7 +1577,7 @@ func (s *Scheduler) handlePermanentValidationError(task sqlstore.TaskRecord, ver
 		if err != nil {
 			return err
 		}
-		if err := tx.TransitionTaskWithReason(task.ID, "blocked", reason); err != nil {
+		if err := tx.TransitionTaskOpts(task.ID, "blocked", schedReason(reason)); err != nil {
 			return err
 		}
 		if _, err := tx.AppendRunEvent(&sqlstore.RunEventRecord{

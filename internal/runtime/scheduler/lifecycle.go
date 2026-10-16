@@ -153,7 +153,7 @@ func (lm *LifecycleManager) handleDone(task *sqlstore.TaskRecord, runID int64, r
 	// edge fires from the canonical source state.
 	if task.Status != "doing" {
 		if err := lm.stateWriter.Submit(context.Background(), "lifecycle_normalize_doing", func(tx *sqlstore.WriteTx) error {
-			return tx.TransitionTask(task.ID, "doing")
+			return tx.TransitionTaskOpts(task.ID, "doing", schedPlain())
 		}); err != nil {
 			log.Printf("[lifecycle] CW-20260509-0006 normalize %s -> doing failed: %v (proceeding with on_done from %s)", task.ID, err, task.Status)
 		} else {
@@ -313,9 +313,9 @@ func (lm *LifecycleManager) transition(task *sqlstore.TaskRecord, runID int64, n
 
 	if err := lm.stateWriter.Submit(context.Background(), "lifecycle_transition", func(tx *sqlstore.WriteTx) error {
 		if blockedReason != "" {
-			return tx.TransitionTaskWithReason(task.ID, newStatus, blockedReason)
+			return tx.TransitionTaskOpts(task.ID, newStatus, schedReason(blockedReason))
 		}
-		return tx.TransitionTask(task.ID, newStatus)
+		return tx.TransitionTaskOpts(task.ID, newStatus, schedPlain())
 	}); err != nil {
 		return fmt.Errorf("lifecycle: transition %s -> %s: %w", task.ID, newStatus, err)
 	}

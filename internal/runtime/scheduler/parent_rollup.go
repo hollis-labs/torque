@@ -72,7 +72,7 @@ func ParentRollupTickGated(store *sqlstore.Store, bus *EventBus, gate func(conte
 
 		switch {
 		case anyBlocked && p.Status != "blocked":
-			if err := store.TransitionTaskWithReason(p.ID, "blocked", "child blocked"); err != nil {
+			if err := store.TransitionTaskOpts(context.Background(), p.ID, "blocked", schedReason("child blocked")); err != nil {
 				return err
 			}
 		case allDone:
@@ -81,7 +81,7 @@ func ParentRollupTickGated(store *sqlstore.Store, bus *EventBus, gate func(conte
 			}
 			if gate != nil && (p.OnDone == "close" || p.OnDone == "notify") {
 				if reason := gate(context.Background(), &p); reason != "" {
-					if err := store.TransitionTaskWithReason(p.ID, "blocked", reason); err != nil {
+					if err := store.TransitionTaskOpts(context.Background(), p.ID, "blocked", schedReason(reason)); err != nil {
 						return err
 					}
 					continue
@@ -101,9 +101,9 @@ func ParentRollupTickGated(store *sqlstore.Store, bus *EventBus, gate func(conte
 func applyParentOnDone(store *sqlstore.Store, bus *EventBus, p sqlstore.TaskRecord) error {
 	switch p.OnDone {
 	case "close":
-		return store.TransitionTask(p.ID, "done")
+		return store.TransitionTaskOpts(context.Background(), p.ID, "done", schedPlain())
 	case "notify":
-		if err := store.TransitionTask(p.ID, "done"); err != nil {
+		if err := store.TransitionTaskOpts(context.Background(), p.ID, "done", schedPlain()); err != nil {
 			return err
 		}
 		if bus != nil {
@@ -115,7 +115,7 @@ func applyParentOnDone(store *sqlstore.Store, bus *EventBus, p sqlstore.TaskReco
 		}
 		return nil
 	default: // "review" and any unexpected value
-		return store.TransitionTask(p.ID, "review")
+		return store.TransitionTaskOpts(context.Background(), p.ID, "review", schedPlain())
 	}
 }
 

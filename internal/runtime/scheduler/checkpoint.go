@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,7 +53,10 @@ func SweepCheckpointTimeouts(store *sqlstore.Store, bus *EventBus, now time.Time
 		}
 		if task.Status == "review" && strings.Contains(task.BlockedReason, cp.CorrelationID) {
 			reason := fmt.Sprintf("checkpoint %s timed out", cp.CorrelationID)
-			if err := store.TransitionTaskWithReason(cp.TaskID, "blocked", reason); err != nil {
+			if err := store.TransitionTaskOpts(context.Background(), cp.TaskID, "blocked", sqlstore.TransitionOpts{
+				Reason:  &reason,
+				Trigger: sqlstore.Trigger{Kind: sqlstore.TriggerSystem, Ref: "checkpoint:" + cp.CorrelationID},
+			}); err != nil {
 				return flipped, err
 			}
 			if bus != nil {

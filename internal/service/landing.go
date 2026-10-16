@@ -62,7 +62,7 @@ func (s *TaskService) EnforceLanding(ctx context.Context, task *sqlstore.TaskRec
 	if reason == "" {
 		return nil
 	}
-	if err := s.store.TransitionTaskWithReason(task.ID, "blocked", reason); err != nil {
+	if err := s.store.TransitionTaskOpts(ctx, task.ID, "blocked", sqlstore.TransitionOpts{Reason: &reason, Trigger: sqlstore.Trigger{Kind: sqlstore.TriggerHook, Ref: "landing-gate"}}); err != nil {
 		return err
 	}
 	s.notifyTransition(ctx, task.ID, task.Status, "blocked")
