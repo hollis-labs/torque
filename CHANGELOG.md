@@ -17,7 +17,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   the same status writes no event. `reason` is truncated to 1 KiB; events say
   `class.sanitized=false` until the shared sanitize stage lands. Harness core
   is now v0.11.0 (mesh/core follows to v0.5.0). `TaskUpdate.Status` is removed (nothing set it, and it
-  bypassed the hook).
+  bypassed the hook). `trigger.kind` comes from the surface, not from
+  identity: every MCP call (remote and the worker loopback) is `agent`; an HTTP
+  request is `human` only when it carries `X-Client: browser`, which the GUI
+  sends on every request, and an unmarked API call is `agent`. Identity goes
+  only in the event's `actor` block.
 - `/mcp` tool calls are scoped per tool (CW-20261016-0081). Every Torque MCP
   tool maps to `torque.read`, `torque.write` or `torque.admin` in
   `internal/mcpscopes` (deny by default; a test fails if any registered tool

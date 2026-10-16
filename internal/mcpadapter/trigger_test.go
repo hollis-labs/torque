@@ -10,18 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// capture runs the middleware over a tools/call and returns the trigger that
-// a store write made with the handler's context would be stamped with.
+// capture runs the middleware over a tools/call and returns the trigger that a
+// store write made with the handler's context would be stamped with.
 func capture(t *testing.T, ctx context.Context) sqlstore.Trigger {
 	t.Helper()
-	return captureWith(t, ctx, sqlstore.TriggerHuman)
-}
-
-func captureWith(t *testing.T, ctx context.Context, unverified string) sqlstore.Trigger {
-	t.Helper()
 	var got sqlstore.Trigger
-	h := stampTrigger(unverified)(func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
-		// A state change with no explicit trigger takes the context's.
+	h := stampTrigger()(func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
 		got = sqlstore.ResolveTrigger(ctx)
 		return nil, nil
 	})
@@ -31,21 +25,21 @@ func captureWith(t *testing.T, ctx context.Context, unverified string) sqlstore.
 	return got
 }
 
-func TestStampTrigger_AgentAndHuman(t *testing.T) {
-	agent := auth.WithPrincipal(context.Background(), auth.Principal{Verified: true, ID: "msg://agent/x/1", Kind: auth.KindAgent})
-	require.Equal(t, sqlstore.Trigger{Kind: sqlstore.TriggerAgent, Ref: "mcp:torque_task_transition"}, capture(t, agent))
+// The kind comes from the surface: every MCP call is an agent call, whatever
+// the principal is or is not (architect ruling, trigger kind from surface).
+func TestStampTrigger_EveryMCPCallIsAgent(t *testing.T) {
+	want := sqlstore.Trigger{Kind: sqlstore.TriggerAgent, Ref: "mcp:torque_task_transition"}
 
-	// Unverified or non-agent callers are not claimed to be agents.
-	unverified := auth.WithPrincipal(context.Background(), auth.Principal{ID: "x", Kind: auth.KindAgent})
-	require.Equal(t, sqlstore.TriggerHuman, capture(t, unverified).Kind)
-	require.Equal(t, sqlstore.TriggerHuman, capture(t, context.Background()).Kind)
-}
+	verifiedAgent := auth.WithPrincipal(context.Background(), auth.Principal{Verified: true, ID: "msg://agent/x/1", Kind: auth.KindAgent})
+	verifiedOperator := auth.WithPrincipal(context.Background(), auth.Principal{Verified: true, ID: "msg://user/x/1", Kind: auth.KindOperator})
+	unverified := auth.WithPrincipal(context.Background(), auth.Principal{ID: "operator(off-mode)", Kind: auth.KindOperator})
 
-// A loopback adapter serves one agent worker, so its unverified calls are
-// agent calls; the remote surface keeps human. Wrong is worse than missing.
-func TestStampTrigger_LoopbackAdapterIsAgent(t *testing.T) {
-	require.Equal(t, sqlstore.TriggerAgent, (&Adapter{loopbackTaskID: "CW-X-1"}).unverifiedTrigger())
-	require.Equal(t, sqlstore.TriggerHuman, (&Adapter{}).unverifiedTrigger())
-	require.Equal(t, sqlstore.Trigger{Kind: sqlstore.TriggerAgent, Ref: "mcp:torque_task_transition"},
-		captureWith(t, context.Background(), (&Adapter{loopbackTaskID: "CW-X-1"}).unverifiedTrigger()))
+	for name, ctx := range map[string]context.Context{
+		"verified agent":    verifiedAgent,
+		"verified operator": verifiedOperator,
+		"off-mode operator": unverified,
+		"no principal":      context.Background(),
+	} {
+		t.Run(name, func(t *testing.T) { require.Equal(t, want, capture(t, ctx)) })
+	}
 }

@@ -55,8 +55,8 @@ func newTriggerStore(t *testing.T) (*sqlstore.Store, *service.Service) {
 	return store, service.New(store)
 }
 
-// A transition made by an agent's own loopback adapter is an agent
-// transition, even with no auth guard and no principal (off mode).
+// A transition made through an agent's own loopback adapter is an agent
+// transition, with no auth guard and no principal (off mode).
 func TestTrigger_LoopbackTransitionIsRecordedAsAgent(t *testing.T) {
 	store, svc := newTriggerStore(t)
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-TRG-1", Title: "t", Priority: 2, Executor: "cli"}))
@@ -68,8 +68,9 @@ func TestTrigger_LoopbackTransitionIsRecordedAsAgent(t *testing.T) {
 	require.Equal(t, sqlstore.TriggerAgent, kind)
 }
 
-// The remote surface, with no verified agent principal, stays human.
-func TestTrigger_RemoteTransitionWithoutPrincipalIsRecordedAsHuman(t *testing.T) {
+// The remote surface is an agent surface too: with no principal at all
+// (off mode) the transition is still an agent one, never a human one.
+func TestTrigger_RemoteTransitionIsRecordedAsAgent(t *testing.T) {
 	store, svc := newTriggerStore(t)
 	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CW-TRG-2", Title: "t", Priority: 2, Executor: "cli"}))
 
@@ -77,5 +78,5 @@ func TestTrigger_RemoteTransitionWithoutPrincipalIsRecordedAsHuman(t *testing.T)
 
 	kind, to := lastOutboxTrigger(t, store, "CW-TRG-2")
 	require.Equal(t, "doing", to)
-	require.Equal(t, sqlstore.TriggerHuman, kind)
+	require.Equal(t, sqlstore.TriggerAgent, kind)
 }

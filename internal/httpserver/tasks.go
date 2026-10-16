@@ -1284,7 +1284,7 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 	if req.Force {
 		transition = s.svc.Task.ForceTransition
 	}
-	ctx := sqlstore.ContextWithTrigger(r.Context(), sqlstore.Trigger{Kind: sqlstore.TriggerHuman, Ref: "http:POST /tasks/{id}/transition"})
+	ctx := httpTrigger(r, "POST /tasks/{id}/transition").Context()
 	if err := transition(ctx, id, req.Status); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
@@ -1331,7 +1331,7 @@ func (s *Server) bulkTransitionTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := sqlstore.ContextWithTrigger(r.Context(), sqlstore.Trigger{Kind: sqlstore.TriggerHuman, Ref: "http:POST /tasks/transition"})
+	ctx := httpTrigger(r, "POST /tasks/bulk-transition").Context()
 	succeeded, _ := s.svc.Task.BulkTransition(ctx, req.IDs, req.Status)
 	// Broadcast only the IDs that actually transitioned. The prior code
 	// took req.IDs[:n], which on partial failure broadcast the WRONG ids

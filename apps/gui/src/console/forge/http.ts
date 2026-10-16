@@ -6,6 +6,7 @@
 // as `{ "data": ... }` (a bare body is also accepted). Unknown fields are
 // passed through untouched; missing collection fields are defaulted.
 
+import { GUI_CLIENT_HEADERS } from '@/lib/api'
 import type { ForgeClient } from './client'
 import {
   ForgeError,
@@ -125,7 +126,7 @@ export class HttpForgeClient implements ForgeClient {
   }
 
   private async request(method: 'GET' | 'POST' | 'PUT', path: string, body?: unknown, write = false): Promise<unknown> {
-    const headers: Record<string, string> = { Accept: 'application/json', ...this.opts.headers }
+    const headers: Record<string, string> = { Accept: 'application/json', ...GUI_CLIENT_HEADERS, ...this.opts.headers }
     if (body !== undefined) headers['Content-Type'] = 'application/json'
     if (write) {
       const tok = await this.opts.confirmToken?.()
