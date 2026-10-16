@@ -105,7 +105,8 @@ func (s *Server) respondCheckpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if err := s.svc.Checkpoint.Respond(r.Context(), service.CheckpointRespondInput{
+	ctx := httpTrigger(r, "POST /checkpoints/{correlation_id}/respond").Context()
+	if err := s.svc.Checkpoint.Respond(ctx, service.CheckpointRespondInput{
 		CorrelationID:       corr,
 		ResponseJSON:        req.ResponseJSON,
 		ResponderSourceType: req.ResponderSourceType,
@@ -137,7 +138,8 @@ func (s *Server) cancelCheckpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	if err := s.svc.Checkpoint.Cancel(service.CheckpointCancelInput{
+	ctx := httpTrigger(r, "POST /checkpoints/{correlation_id}/cancel").Context()
+	if err := s.svc.Checkpoint.Cancel(ctx, service.CheckpointCancelInput{
 		CorrelationID:      corr,
 		Reason:             req.Reason,
 		CancelerSourceType: req.CancelerSourceType,

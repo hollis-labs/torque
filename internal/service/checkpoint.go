@@ -239,7 +239,7 @@ func (s *CheckpointService) Emit(in CheckpointEmitInput) (*CheckpointEmitOutput,
 	// recorded either way, and callers who care can inspect task state
 	// after the fact.
 	reason := "awaiting checkpoint " + corr
-	if _, err := s.store.ParkTaskOnCheckpoint(in.TaskID, reason); err != nil {
+	if _, err := s.store.ParkTaskOnCheckpointRef(context.Background(), in.TaskID, reason, "checkpoint:"+corr); err != nil {
 		return nil, fmt.Errorf("park task on checkpoint: %w", err)
 	}
 
@@ -464,7 +464,7 @@ const checkpointDispatchTimeout = 30 * time.Second
 func (s *CheckpointService) dispatchResumeOrFallback(ctx context.Context, cp *sqlstore.CheckpointRecord, responseJSON string) error {
 	if s.responseDispatcher == nil {
 		// Legacy: hand off to the scheduler via the todo queue.
-		return s.store.TransitionTaskWithReason(cp.TaskID, "todo", "")
+		return s.checkpointTransition(ctx, cp, "todo", "")
 	}
 	dispatchCtx, cancel := context.WithTimeout(ctx, checkpointDispatchTimeout)
 	defer cancel()
@@ -478,21 +478,21 @@ func (s *CheckpointService) dispatchResumeOrFallback(ctx context.Context, cp *sq
 		// again on an in-process worker. Mirror the scheduler's
 		// todo→doing transition so picker.go won't redispatch and the
 		// task's blocked_reason clears.
-		return s.store.TransitionTaskWithReason(cp.TaskID, "doing", "")
+		return s.checkpointTransition(ctx, cp, "doing", "")
 	}
 	if errors.Is(err, ErrNoLiveSessionForTask) {
 		// No session row to resume — fall through to the legacy fresh-boot
 		// path via the scheduler. This is the expected branch for tasks
 		// whose worker never registered with the long-lived session
 		// manager (one-shot executor tasks, recovered-from-crash flows).
-		return s.store.TransitionTaskWithReason(cp.TaskID, "todo", "")
+		return s.checkpointTransition(ctx, cp, "todo", "")
 	}
 	// Any other error: log and fall back to the legacy path so the task
 	// progresses. The dispatcher will have observability of its own
 	// failures; Respond's job is to not strand the task.
 	log.Printf("[checkpoint] respond dispatcher error for task=%s corr=%s: %v — falling back to legacy todo redispatch",
 		cp.TaskID, cp.CorrelationID, err)
-	return s.store.TransitionTaskWithReason(cp.TaskID, "todo", "")
+	return s.checkpointTransition(ctx, cp, "todo", "")
 }
 
 // attachCheckpointResponseToMetadata writes the response into
@@ -535,7 +535,7 @@ func (s *CheckpointService) attachCheckpointResponseToMetadata(
 // with BlockedReason mentioning the correlation_id), Cancel also updates
 // the task's BlockedReason to "checkpoint <corr> canceled: <reason>" so
 // the human driving the follow-up transition sees why it was canceled.
-func (s *CheckpointService) Cancel(in CheckpointCancelInput) error {
+func (s *CheckpointService) Cancel(ctx context.Context, in CheckpointCancelInput) error {
 	if in.CorrelationID == "" {
 		return &ValidationError{Field: "correlation_id", Message: "correlation_id required"}
 	}
@@ -562,13 +562,13 @@ func (s *CheckpointService) Cancel(in CheckpointCancelInput) error {
 	); err != nil {
 		return err
 	}
-	return s.applyCancelToParkedTask(cp, in.Reason)
+	return s.applyCancelToParkedTask(ctx, cp, in.Reason)
 }
 
 // applyCancelToParkedTask updates the parked task's BlockedReason to reflect
 // the cancellation per spec §4.5. If the task is no longer parked on this
 // correlation (already moved on, or non_blocking mode), this is a noop.
-func (s *CheckpointService) applyCancelToParkedTask(cp *sqlstore.CheckpointRecord, reason string) error {
+func (s *CheckpointService) applyCancelToParkedTask(ctx context.Context, cp *sqlstore.CheckpointRecord, reason string) error {
 	task, err := s.store.GetTask(cp.TaskID)
 	if err != nil {
 		return err
@@ -581,7 +581,17 @@ func (s *CheckpointService) applyCancelToParkedTask(cp *sqlstore.CheckpointRecor
 	if reason != "" {
 		blockedReason += ": " + reason
 	}
-	return s.store.TransitionTaskWithReason(cp.TaskID, "review", blockedReason)
+	return s.checkpointTransition(ctx, cp, "review", blockedReason)
+}
+
+// checkpointTransition moves the checkpoint's task and records who did it: the
+// trigger kind the caller's context carries (human over HTTP, agent over MCP),
+// with the checkpoint as the ref. It also carries the caller's trace and actor.
+func (s *CheckpointService) checkpointTransition(ctx context.Context, cp *sqlstore.CheckpointRecord, status, reason string) error {
+	return s.store.TransitionTaskOpts(ctx, cp.TaskID, status, sqlstore.TransitionOpts{
+		Reason:  &reason,
+		Trigger: sqlstore.TriggerWithRef(ctx, "checkpoint:"+cp.CorrelationID),
+	})
 }
 
 // Get returns a checkpoint by correlation_id.

@@ -113,6 +113,7 @@ func (s *Server) routes() {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.corsMiddleware)
 		r.Use(s.requireToken)
+		r.Use(stampHTTPTrigger)
 
 		// Tasks
 		r.Get("/judge/status", s.judgeStatus)

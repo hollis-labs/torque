@@ -1461,7 +1461,14 @@ func (s *Store) TransitionTaskOpts(ctx context.Context, id, newStatus string, o 
 // The state event is appended in the same transaction, and only when the
 // predicate matched.
 func (s *Store) ParkTaskOnCheckpoint(id, reason string) (bool, error) {
-	w, err := s.BeginWriteTx(context.Background())
+	return s.ParkTaskOnCheckpointRef(context.Background(), id, reason, "checkpoint.park")
+}
+
+// ParkTaskOnCheckpointRef is ParkTaskOnCheckpoint with the context for trace
+// and actor, and ref naming the checkpoint that caused the park (it becomes
+// the event's trigger.ref).
+func (s *Store) ParkTaskOnCheckpointRef(ctx context.Context, id, reason, ref string) (bool, error) {
+	w, err := s.BeginWriteTx(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -1494,7 +1501,7 @@ func (s *Store) ParkTaskOnCheckpoint(id, reason string) (bool, error) {
 		From:       "doing",
 		To:         "review",
 		Reason:     reason,
-		Trigger:    Trigger{Kind: TriggerSystem, Ref: "checkpoint.park"},
+		Trigger:    Trigger{Kind: TriggerSystem, Ref: ref},
 		Scope:      stateScope{ProjectID: project.String, EpicID: epic.String, SprintID: sprint.String, TaskID: id},
 	}); err != nil {
 		return false, err

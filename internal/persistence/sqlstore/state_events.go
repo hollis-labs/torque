@@ -303,6 +303,9 @@ func nullIfEmpty(s string) sql.NullString {
 
 // eventCorr builds the correlation block: the trace of the calling span, the
 // task as the correlation group, and the causing event when there is one.
+// Known limit: ops submitted through the queued state writer run in the
+// queue's batch transaction, so their events carry the queue's trace (if any),
+// not the submitter's.
 func (w *WriteTx) eventCorr(sp eventSpec) *runtimeevents.Corr {
 	corr := &runtimeevents.Corr{CausationID: sp.Causation, IdempotencyKey: sp.IdempotencyKey}
 	if sp.Scope.TaskID != "" {
@@ -330,6 +333,18 @@ func stateActor(ctx context.Context) *runtimeevents.Actor {
 		kind = "service"
 	}
 	return &runtimeevents.Actor{URN: p.ID, Kind: kind, Verified: "token"}
+}
+
+// TriggerWithRef is the trigger kind ctx carries (system when none) with ref
+// as the specific cause. Use it where the kind comes from who called but the
+// ref names the thing acted on, such as a checkpoint id.
+func TriggerWithRef(ctx context.Context, ref string) Trigger {
+	t, ok := triggerFromContext(ctx)
+	if !ok {
+		t = Trigger{Kind: TriggerSystem}
+	}
+	t.Ref = ref
+	return t
 }
 
 // resolveTrigger picks the trigger for a change: explicit option, then the
