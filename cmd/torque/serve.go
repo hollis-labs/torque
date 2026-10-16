@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -299,7 +300,16 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 
 	// HTTP handler — svc was constructed earlier so the executor path can
 	// claim it for per-task MCP loopback wiring.
-	handler := httpserver.New(svc, sched)
+	commit := "unknown"
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" && setting.Value != "" {
+				commit = setting.Value
+				break
+			}
+		}
+	}
+	handler := httpserver.New(svc, sched).WithBuildInfo(version, commit)
 	handler.WithSessions(agentDeps.Sessions)
 	handler.WithSecurity(sec)
 	// /mcp: the `torque mcp` tool surface for clients that must not open
