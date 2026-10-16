@@ -57,6 +57,17 @@ other frames on the stream (CRUD pings, scheduler run events) are best effort
 and carry no id. The reader is SQLite-only for now: on Postgres `/events` carries no task
 transitions (the events are still written).
 
+**Restoring a database.** The `<generation>` in an event id is the log's
+restart counter. A fresh log gets a random one at startup. When you restore
+`main.db` from a backup (or otherwise rewind the log), bump it by hand so
+clients holding ids from the later, lost history get a `generation_changed`
+gap instead of a wrong replay:
+
+```sql
+UPDATE event_outbox_meta SET generation = generation + 1 WHERE id = 1;
+```
+
+
 Forums uses the backend-held Tether operator credential and the
 [Tether Forums contract](https://github.com/hollis-labs/tether/blob/feat/forums-hierarchy/docs/forums.md).
 The GUI groups forums by category with descriptions, post totals and last-post details.
