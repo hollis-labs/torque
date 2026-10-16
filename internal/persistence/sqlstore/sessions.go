@@ -17,6 +17,13 @@ var ErrSessionNotFound = errors.New("session not found")
 // Soft-FK fields (ProjectID, TaskID) are stored as nullable strings since
 // SQLite does not enforce foreign keys by default in this codebase.
 type SessionRecord struct {
+	// RunID links a Torque run; TetherSessionID is a separate identity.
+	RunID           sql.NullInt64
+	TetherSessionID sql.NullString
+	LaunchID        sql.NullString
+	WorkstreamID    sql.NullString
+
+	ProgressDetail    sql.NullString
 	ID                string
 	LaunchProfile     string
 	Role              string
@@ -42,7 +49,7 @@ type SessionRecord struct {
 
 const sessionSelectCols = `id, launch_profile, role, tier, capability_profile, agent_profile, provider, runtime_id, runtime_kind,
 	workdir, project_id, task_id, state, pid, exit_code, resume_hint, meta,
-	created_at, updated_at, last_activity, ended_at`
+	created_at, updated_at, last_activity, ended_at, progress_detail, run_id, tether_session_id, launch_id, workstream_id`
 
 func scanSession(row interface {
 	Scan(...any) error
@@ -52,7 +59,7 @@ func scanSession(row interface {
 		&s.ID, &s.LaunchProfile, &s.Role, &s.Tier, &s.CapabilityProfile, &s.AgentProfile, &s.Provider, &s.RuntimeID, &s.RuntimeKind,
 		&s.Workdir, &s.ProjectID, &s.TaskID, &s.State, &s.PID, &s.ExitCode,
 		&s.ResumeHint, &s.MetaJSON, &s.CreatedAt, &s.UpdatedAt, &s.LastActivity,
-		&s.EndedAt,
+		&s.EndedAt, &s.ProgressDetail, &s.RunID, &s.TetherSessionID, &s.LaunchID, &s.WorkstreamID,
 	)
 	if err != nil {
 		return nil, err
@@ -97,10 +104,10 @@ func (s *Store) CreateSession(rec *SessionRecord) error {
 	_, err := s.db.Exec(`
 		INSERT INTO sessions (
 			id, launch_profile, role, tier, capability_profile, agent_profile, provider, runtime_id, runtime_kind,
-			workdir, project_id, task_id, state, pid, meta
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			workdir, project_id, task_id, state, pid, meta, progress_detail, run_id, tether_session_id, launch_id, workstream_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.ID, rec.LaunchProfile, rec.Role, rec.Tier, rec.CapabilityProfile, rec.AgentProfile, rec.Provider, rec.RuntimeID, currentRuntimeKind(rec.RuntimeKind),
-		rec.Workdir, rec.ProjectID, rec.TaskID, state, rec.PID, meta,
+		rec.Workdir, rec.ProjectID, rec.TaskID, state, rec.PID, meta, rec.ProgressDetail, rec.RunID, rec.TetherSessionID, rec.LaunchID, rec.WorkstreamID,
 	)
 	if err != nil {
 		return fmt.Errorf("insert session: %w", err)

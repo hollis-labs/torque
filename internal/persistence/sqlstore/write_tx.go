@@ -112,13 +112,21 @@ func (w *WriteTx) CreateRun(r *RunRecord) (int64, error) {
 	now := time.Now().UTC()
 	r.StartedAt = now
 
-	const q = `INSERT INTO runs (task_id, executor, status, started_at, prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata, profile_snapshot)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	// Counter and run insertion share the writer transaction. Retaining the
+	// counter when runs are deleted prevents attempt-number reuse.
+	if err := w.tx.QueryRow(`INSERT INTO task_run_counters(task_id, last_attempt)
+        VALUES (?, 1) ON CONFLICT(task_id) DO UPDATE
+        SET last_attempt = task_run_counters.last_attempt + 1
+        RETURNING last_attempt`, r.TaskID).Scan(&r.Attempt); err != nil {
+		return 0, err
+	}
+	const q = `INSERT INTO runs (task_id, executor, status, started_at, prompt_tokens, completion_tokens, cost, exit_code, error_message, metadata, profile_snapshot, progress_detail, attempt, tether_session_id, launch_id, workstream_id)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	res, err := w.tx.Exec(q,
 		r.TaskID, r.Executor, r.Status, r.StartedAt,
 		r.PromptTokens, r.CompletionTokens, r.Cost,
-		r.ExitCode, r.ErrorMessage, r.Metadata, r.ProfileSnapshot,
+		r.ExitCode, r.ErrorMessage, r.Metadata, r.ProfileSnapshot, r.ProgressDetail, r.Attempt, r.TetherSessionID, r.LaunchID, r.WorkstreamID,
 	)
 	if err != nil {
 		return 0, err
@@ -257,10 +265,10 @@ func (w *WriteTx) CreateSession(rec *SessionRecord) error {
 	_, err := w.tx.Exec(`
 		INSERT INTO sessions (
 			id, launch_profile, agent_profile, provider, runtime_id, runtime_kind,
-			workdir, project_id, task_id, state, pid, meta
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			workdir, project_id, task_id, state, pid, meta, progress_detail, run_id, tether_session_id, launch_id, workstream_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.ID, rec.LaunchProfile, rec.AgentProfile, rec.Provider, rec.RuntimeID, currentRuntimeKind(rec.RuntimeKind),
-		rec.Workdir, rec.ProjectID, rec.TaskID, state, rec.PID, meta,
+		rec.Workdir, rec.ProjectID, rec.TaskID, state, rec.PID, meta, rec.ProgressDetail, rec.RunID, rec.TetherSessionID, rec.LaunchID, rec.WorkstreamID,
 	)
 	if err != nil {
 		return fmt.Errorf("insert session: %w", err)
@@ -632,8 +640,8 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 		deliverable_preset, on_done_merge, blocked_reason, metadata,
 		sprint_id, project_id, epic_id,
 		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
-		parent_id
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+		parent_id, progress_detail, progress_detail_source
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := w.tx.Exec(q,
 		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
@@ -643,7 +651,7 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 		t.DeliverablePreset, t.OnDoneMerge, t.BlockedReason, t.Metadata,
 		t.SprintID, t.ProjectID, t.EpicID,
 		t.Kind, t.SourceType, t.SourceRef, t.Trust, t.CheckpointMode, t.OnCheckpointResponse,
-		t.ParentID,
+		t.ParentID, t.ProgressDetail, t.ProgressDetailSource,
 	)
 	return err
 }

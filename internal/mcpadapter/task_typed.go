@@ -241,6 +241,8 @@ func typedTaskFull(t *sqlstore.TaskRecord, tags []sqlstore.TagRecord, deps []str
 		"manual":                 t.Manual,
 		"executor":               t.Executor,
 		"launch_profile":         t.LaunchProfile,
+		"progress_detail":        typedNullString(t.ProgressDetail),
+		"progress_detail_source": typedNullString(t.ProgressDetailSource),
 		"role":                   t.Role,
 		"tier":                   t.Tier,
 		"capability_profile":     typedObject(t.CapabilityProfile, "capability_profile", &decodeErrs),

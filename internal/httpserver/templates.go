@@ -23,6 +23,7 @@ func templateJSON(t *sqlstore.TemplateRecord) map[string]interface{} {
 		"auto_execute":           t.AutoExecute,
 		"executor":               nullStr(t.Executor),
 		"launch_profile":         nullStr(t.LaunchProfile),
+		"progress_detail":        nullStr(t.ProgressDetail),
 		"role":                   nullStr(t.Role),
 		"tier":                   nullStr(t.Tier),
 		"capability_profile":     parseFreeMap(t.CapabilityProfile),
@@ -62,6 +63,7 @@ type templateCreateRequest struct {
 	AutoExecute          *bool                 `json:"auto_execute,omitempty"`
 	Executor             string                `json:"executor,omitempty"`
 	LaunchProfile        string                `json:"launch_profile,omitempty"`
+	ProgressDetail       string                `json:"progress_detail,omitempty"`
 	Role                 string                `json:"role,omitempty"`
 	Tier                 string                `json:"tier,omitempty"`
 	CapabilityProfile    map[string]any        `json:"capability_profile,omitempty"`
@@ -96,6 +98,7 @@ type templateUpdateRequest struct {
 	AutoExecute          *bool                 `json:"auto_execute,omitempty"`
 	Executor             *string               `json:"executor,omitempty"`
 	LaunchProfile        *string               `json:"launch_profile,omitempty"`
+	ProgressDetail       *string               `json:"progress_detail,omitempty"`
 	Role                 *string               `json:"role,omitempty"`
 	Tier                 *string               `json:"tier,omitempty"`
 	CapabilityProfile    map[string]any        `json:"capability_profile,omitempty"`
@@ -149,6 +152,7 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 		AutoExecute:          true, // default; overridden below if explicit
 		Executor:             req.Executor,
 		LaunchProfile:        req.LaunchProfile,
+		ProgressDetail:       req.ProgressDetail,
 		Role:                 req.Role,
 		Tier:                 req.Tier,
 		CapabilityProfile:    req.CapabilityProfile,
@@ -201,6 +205,7 @@ func (s *Server) updateTemplate(w http.ResponseWriter, r *http.Request) {
 		AutoExecute:          req.AutoExecute,
 		Executor:             req.Executor,
 		LaunchProfile:        req.LaunchProfile,
+		ProgressDetail:       req.ProgressDetail,
 		Role:                 req.Role,
 		Tier:                 req.Tier,
 		CapabilityProfile:    req.CapabilityProfile,

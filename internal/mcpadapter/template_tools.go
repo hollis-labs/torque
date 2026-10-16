@@ -21,6 +21,7 @@ Example: {"id":"backend-fix","name":"Backend Fix","description":"Fix {{issue}}",
 		withString("kind", required(), desc("agent|external|wait|decision|parent")),
 		withBoolean("auto_execute", desc("Default true — whether the scheduler picks up instantiated tasks")),
 		withString("executor", desc("Executor name for agent-kind tasks")),
+		withString("progress_detail", desc("off|milestone|step|verbose; copied to created tasks with template origin.")),
 		withString("launch_profile", desc("Torque launch_profile id default — preferred over agent_profile.")),
 		withString("role", desc("Role override.")),
 		withString("tier", desc("Tier override.")),
@@ -69,6 +70,7 @@ Example: {"id":"backend-fix","description":"Fix {{issue}} in {{component}}"}`),
 		withString("kind", desc("New kind")),
 		withBoolean("auto_execute"),
 		withString("executor"),
+		withString("progress_detail", desc("off|milestone|step|verbose; empty clears.")),
 		withString("launch_profile"),
 		withString("role"),
 		withString("tier"),
@@ -151,6 +153,7 @@ func (a *Adapter) handleTemplateCreate(ctx context.Context, req map[string]any) 
 		Kind:                 reqStr(req, "kind"),
 		Executor:             reqStr(req, "executor"),
 		LaunchProfile:        reqStr(req, "launch_profile"),
+		ProgressDetail:       reqStr(req, "progress_detail"),
 		Role:                 reqStr(req, "role"),
 		Tier:                 reqStr(req, "tier"),
 		AgentProfile:         reqStr(req, "agent_profile"),
@@ -273,6 +276,10 @@ func (a *Adapter) handleTemplateUpdate(ctx context.Context, req map[string]any) 
 	if _, ok := args["executor"]; ok {
 		v := reqStr(req, "executor")
 		in.Executor = &v
+	}
+	if _, ok := args["progress_detail"]; ok {
+		v := reqStr(req, "progress_detail")
+		in.ProgressDetail = &v
 	}
 	if _, ok := args["launch_profile"]; ok {
 		v := reqStr(req, "launch_profile")

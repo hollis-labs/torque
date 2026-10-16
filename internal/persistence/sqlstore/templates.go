@@ -41,6 +41,7 @@ func (e *TemplateReferencedError) Is(target error) bool {
 // QualityGates, Deliverables, MetadataTemplate, RequiredVars, Tags) hold
 // marshaled documents — schema validation is the service layer's job.
 type TemplateRecord struct {
+	ProgressDetail       sql.NullString
 	ID                   string
 	Version              int
 	Name                 string
@@ -85,7 +86,7 @@ const templateSelectCols = `id, version, name, description, kind, auto_execute,
 	on_done, on_fail, on_review, on_done_merge,
 	escalation_chain, quality_gates, deliverables,
 	checkpoint_mode, on_checkpoint_response,
-	metadata_template, required_vars, tags, is_archived, created_at, updated_at`
+	metadata_template, required_vars, tags, is_archived, created_at, updated_at, progress_detail`
 
 func scanTemplate(row interface {
 	Scan(...any) error
@@ -99,7 +100,7 @@ func scanTemplate(row interface {
 		&t.OnDone, &t.OnFail, &t.OnReview, &t.OnDoneMerge,
 		&t.EscalationChain, &t.QualityGates, &t.Deliverables,
 		&t.CheckpointMode, &t.OnCheckpointResponse,
-		&t.MetadataTemplate, &t.RequiredVars, &t.Tags, &isArchived, &t.CreatedAt, &t.UpdatedAt,
+		&t.MetadataTemplate, &t.RequiredVars, &t.Tags, &isArchived, &t.CreatedAt, &t.UpdatedAt, &t.ProgressDetail,
 	)
 	if err != nil {
 		return nil, err
@@ -150,8 +151,8 @@ func (s *Store) CreateTemplate(t *TemplateRecord) error {
 			escalation_chain, quality_gates, deliverables,
 			checkpoint_mode, on_checkpoint_response,
 			metadata_template, required_vars, tags, is_archived,
-			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			created_at, updated_at, progress_detail
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.Version, t.Name, t.Description, t.Kind, autoExecute,
 		t.Executor, t.LaunchProfile, t.Role, t.Tier, t.CapabilityProfile, t.AgentProfile, t.SystemPrompt, t.WorkingDir, t.Tools, t.Permissions, t.Environment,
 		t.CostBudget, t.MaxRetries, t.MaxDurationMs, t.TokenBudget,
@@ -159,7 +160,7 @@ func (s *Store) CreateTemplate(t *TemplateRecord) error {
 		t.EscalationChain, t.QualityGates, t.Deliverables,
 		t.CheckpointMode, t.OnCheckpointResponse,
 		t.MetadataTemplate, t.RequiredVars, t.Tags, isArchived,
-		now, now,
+		now, now, t.ProgressDetail,
 	)
 	if err != nil {
 		return fmt.Errorf("insert template: %w", err)
