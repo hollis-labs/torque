@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"fmt"
+	"errors"
 	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 	"github.com/hollis-labs/libs/harness/core/adapters/provider"
 	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
@@ -9,6 +9,8 @@ import (
 	llmtypes "github.com/hollis-labs/libs/llm/core/llmtypes"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
 )
+
+var ErrProgressDetailInvalid = errors.New("invalid progress_detail: expected off, milestone, step or verbose")
 
 // Options describes a Boot request. Mode picks the lifecycle policy; the
 // other fields parametrize the boot. Required vs optional is documented per
@@ -233,7 +235,7 @@ func (o Options) withResumeSignals(lost, progress chan<- struct{}) Options {
 // Validate enforces cross-Mode constraints. Called by Boot before any work.
 func (o Options) Validate() error {
 	if o.ProgressDetail != "" && !catalog.ProgressDetail(o.ProgressDetail).Valid() {
-		return fmt.Errorf("invalid progress_detail: expected off, milestone, step or verbose")
+		return ErrProgressDetailInvalid
 	}
 	if o.LaunchProfile == "" && o.AgentProfile == "" {
 		return errLaunchProfileRequired

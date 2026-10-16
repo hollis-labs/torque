@@ -198,6 +198,9 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req map[string]any) (
 		SessionMeta:    meta,
 	})
 	if err != nil {
+		if errors.Is(err, agent.ErrProgressDetailInvalid) {
+			return errResult(ErrCodeArgInvalid, err.Error(), "progress_detail")
+		}
 		if errors.Is(err, agent.ErrLaunchPathRefused) {
 			return errResult(ErrCodeArgInvalid, err.Error(), "workdir/repo_root")
 		}

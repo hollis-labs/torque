@@ -111,7 +111,7 @@ func (w *WriteTx) SelfReport(tool string, in map[string]any, digest string) (map
 			}
 		}
 	}
-	if boundDetail.Valid {
+	if boundDetail.Valid && catalog.ProgressDetail(boundDetail.String).Valid() {
 		launch = boundDetail
 	}
 	key := reportString(in, "idempotency_key")
