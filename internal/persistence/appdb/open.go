@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hollis-labs/libs/util/sqlite/sqlitekit"
+	"github.com/hollis-labs/libs/core/util/sqlite/sqlitekit"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "modernc.org/sqlite"
 )

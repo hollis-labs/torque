@@ -37,8 +37,8 @@ import (
 	"context"
 	"log"
 
-	feotel "github.com/hollis-labs/libs/util/otel"
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	feotel "github.com/hollis-labs/libs/core/util/otel"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 	"go.opentelemetry.io/otel/attribute"
 )
 

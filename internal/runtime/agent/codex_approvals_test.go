@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hollis-labs/substrate/harness/adapters/turn"
-	gopermission "github.com/hollis-labs/substrate/harness/interception/permission"
+	"github.com/hollis-labs/libs/harness/core/adapters/turn"
+	gopermission "github.com/hollis-labs/libs/security/policy/permission"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

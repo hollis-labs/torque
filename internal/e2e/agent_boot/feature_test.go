@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	"github.com/hollis-labs/substrate/harness/adapters/provider/events"
-	"github.com/hollis-labs/substrate/harness/sandbox"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/provider/events"
+	"github.com/hollis-labs/libs/harness/core/sandbox"
 	"github.com/hollis-labs/torque/internal/runtime/agent"
 )
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/hollis-labs/substrate/llm-core/modelsdev"
+	"github.com/hollis-labs/libs/llm/core/modelsdev"
 )
 
 // modelEntry mirrors modelsdev.ModelRef with explicit snake_case json tags.

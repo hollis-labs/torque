@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 )
 
 // Op is a federated operation, used in authorization and audit logs.

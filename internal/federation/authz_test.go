@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 )
 
 // peerFor builds a Peer authoritative for the given authorities (white-box).

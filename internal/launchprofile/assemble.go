@@ -3,11 +3,11 @@ package launchprofile
 import (
 	"maps"
 
-	"github.com/hollis-labs/substrate/harness/agentlaunch"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 	"github.com/hollis-labs/torque/internal/config"
 
-	gopermission "github.com/hollis-labs/substrate/harness/interception/permission"
+	gopermission "github.com/hollis-labs/libs/security/policy/permission"
 )
 
 // TaskLaunchOverlay carries the per-task dynamic inputs that the stable

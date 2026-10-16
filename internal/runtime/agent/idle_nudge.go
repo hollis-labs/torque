@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/runtime/executor"
 	"github.com/hollis-labs/torque/internal/runtime/scheduler"

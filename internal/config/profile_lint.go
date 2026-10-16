@@ -9,9 +9,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/hollis-labs/substrate/harness/adapters/launch"
-	"github.com/hollis-labs/substrate/harness/adapters/registry"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/libs/harness/core/adapters/launch"
+	"github.com/hollis-labs/libs/harness/core/adapters/registry"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 	"gopkg.in/yaml.v3"
 
 	"github.com/hollis-labs/torque/internal/runtimetoken"

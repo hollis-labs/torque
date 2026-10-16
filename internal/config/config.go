@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	paths "github.com/hollis-labs/libs/util/apppaths"
+	paths "github.com/hollis-labs/libs/core/util/apppaths"
 )
 
 // appName is Torque's go-apppaths application identity. It drives the XDG

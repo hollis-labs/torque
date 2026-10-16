@@ -3,7 +3,7 @@ package federation
 import (
 	"context"
 
-	gomsg "github.com/hollis-labs/substrate/mesh/messaging"
+	gomsg "github.com/hollis-labs/libs/mesh/core/messaging"
 
 	tqmsg "github.com/hollis-labs/torque/internal/messaging"
 )

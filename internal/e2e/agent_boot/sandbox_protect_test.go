@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/providertest"
-	"github.com/hollis-labs/substrate/harness/sandbox"
-	"github.com/hollis-labs/substrate/llm-core/contracts/runtimes"
+	"github.com/hollis-labs/libs/harness/core/adapters/providertest"
+	"github.com/hollis-labs/libs/harness/core/sandbox"
+	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

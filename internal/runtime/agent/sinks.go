@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
 )
 
 // EventEmitter receives session.state_changed lifecycle events. The

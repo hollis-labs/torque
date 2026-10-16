@@ -12,7 +12,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/hollis-labs/substrate/llm-core/modelsdev"
+	"github.com/hollis-labs/libs/llm/core/modelsdev"
 )
 
 // Catalog is a thin wrapper over modelsdev.Client.

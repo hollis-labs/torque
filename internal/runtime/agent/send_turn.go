@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	feotel "github.com/hollis-labs/libs/util/otel"
-	"github.com/hollis-labs/substrate/harness/adapters/turn"
+	feotel "github.com/hollis-labs/libs/core/util/otel"
+	"github.com/hollis-labs/libs/harness/core/adapters/turn"
 	"go.opentelemetry.io/otel/attribute"
 )
 

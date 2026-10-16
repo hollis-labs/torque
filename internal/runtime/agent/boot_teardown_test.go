@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hollis-labs/substrate/harness/adapters/agentsessions"
-	"github.com/hollis-labs/substrate/harness/adapters/provider"
-	"github.com/hollis-labs/substrate/harness/agentlaunch"
+	"github.com/hollis-labs/libs/harness/core/adapters/agentsessions"
+	"github.com/hollis-labs/libs/harness/core/adapters/provider"
+	"github.com/hollis-labs/libs/harness/core/agentlaunch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
