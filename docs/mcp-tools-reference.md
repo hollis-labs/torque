@@ -775,6 +775,10 @@ transition and ahead of its `task.state_changed`:
   change.
 - `reason` and `missing` (deliverable types, subtodo ids, landing requirements)
   are carried inline; no evidence artifact is stored.
+- The `task.state_changed` the gates lead to names the deciding gate event as its
+  `corr.causation_id`: the first blocking evaluation, else the last one. (A
+  manual-path pass or waiver is recorded in its own transaction before the done,
+  so that done has no gate causation.)
 - A gate that is not configured, or that the flow never reached because an
   earlier one stopped it, is not reported.
 

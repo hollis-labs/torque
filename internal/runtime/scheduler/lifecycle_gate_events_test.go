@@ -110,6 +110,7 @@ func TestGateEvents_AllPassThenDone(t *testing.T) {
 	}
 	require.Equal(t, "task.state_changed", rows[3].Kind, "the checked gates come before the change they cause")
 	require.Equal(t, "done", rows[3].To)
+	require.Equal(t, rows[2].Env.ID, rows[3].Env.Corr.CausationID, "with nothing blocking, the last gate is the deciding one")
 }
 
 func TestGateEvents_FailedSubtodosBlockAndSkipLaterGates(t *testing.T) {
@@ -131,6 +132,7 @@ func TestGateEvents_FailedSubtodosBlockAndSkipLaterGates(t *testing.T) {
 	require.True(t, rows[0].Blocking)
 	require.Equal(t, []string{"a", "b"}, rows[0].Missing)
 	require.Equal(t, "blocked", rows[1].To)
+	require.Equal(t, rows[0].Env.ID, rows[1].Env.Corr.CausationID, "the block names the gate that decided it")
 	require.False(t, called, "a gate the flow never reaches is not evaluated or reported")
 }
 
