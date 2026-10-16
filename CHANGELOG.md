@@ -8,6 +8,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Plan phases are records (CW-20261016-0134, T2). Migration 043 adds
+  `plan_phases` (state, lifecycle generation, tombstones so ids are never
+  reused) and `tasks.phase_id`, validated against the parent plan by triggers.
+  Phases and memberships are backfilled once from `metadata.plan` /
+  `metadata.phase_id`; a membership naming a missing phase is listed in
+  `plan_phase_repairs`. The plan API keeps its shape (phases gain `state` and
+  `lifecycle_generation`) and `metadata.phase_id` on a plan's child still sets
+  the phase. No events are emitted yet; that follows on the T1 append API.
+
 - Task state changes are written to a transactional outbox (CW-20261016-0133,
   PR1). Migration 042 adds `event_outbox`; every task transition (store,
   `WriteTx`, checkpoint park) appends a `task.state_changed` event on envelope

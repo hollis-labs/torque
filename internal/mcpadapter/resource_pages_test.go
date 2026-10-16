@@ -1,6 +1,7 @@
 package mcpadapter_test
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/http"
@@ -45,6 +46,8 @@ func TestFullStack_RemainingResourcePages(t *testing.T) {
 	a := mcpadapter.New(svc, nil).WithSessions(mgr)
 	ts := httptest.NewServer(httpserver.New(svc, nil).WithSessions(mgr))
 	defer ts.Close()
+	_, err := store.AddPlanPhases(context.Background(), "ROOT", []sqlstore.PlanPhaseInput{{Name: "phase"}})
+	require.NoError(t, err)
 	for i := 0; i < 206; i++ {
 		id := fmt.Sprintf("%03d", i)
 		name := "keep-" + id
@@ -54,7 +57,7 @@ func TestFullStack_RemainingResourcePages(t *testing.T) {
 			status = "doing"
 		}
 		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "PL-" + id, Title: name, Kind: "plan", Status: status, Priority: i%5 + 1, Manual: true}))
-		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CH-" + id, Title: name, Status: status, Priority: i%5 + 1, ParentID: sql.NullString{String: "ROOT", Valid: true}, Metadata: sql.NullString{String: `{"phase_id":"phase"}`, Valid: true}, Manual: true}))
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "CH-" + id, Title: name, Status: status, Priority: i%5 + 1, ParentID: sql.NullString{String: "ROOT", Valid: true}, PhaseID: sql.NullString{String: "ph-1", Valid: true}, Manual: true}))
 		require.NoError(t, store.AddTaskToCollection("CH-"+id, "COL", i%3))
 		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: "IN-" + id, Title: name, Status: status, Priority: i%5 + 1, Manual: true}))
 		require.NoError(t, store.AddTaskToInbox("IN-"+id))
@@ -71,7 +74,7 @@ func TestFullStack_RemainingResourcePages(t *testing.T) {
 		args                 map[string]any
 	}{
 		{"plans", "/plans", "torque_plan_list", nil, nil},
-		{"plan_children", "/plans/ROOT/children", "torque_plan_list_children", url.Values{"phase_id": {"phase"}}, map[string]any{"plan_id": "ROOT", "phase_id": "phase"}},
+		{"plan_children", "/plans/ROOT/children", "torque_plan_list_children", url.Values{"phase_id": {"ph-1"}}, map[string]any{"plan_id": "ROOT", "phase_id": "ph-1"}},
 		{"collections", "/collections", "torque_collection_list", nil, nil},
 		{"collection_tasks", "/collections/COL/tasks", "torque_collection_tasks_list", nil, map[string]any{"collection_id": "COL"}},
 		{"collection_inbox", "/collections/inbox/tasks", "torque_collection_inbox_list", nil, nil},

@@ -54,7 +54,7 @@ func markAppliedThrough(t *testing.T, db *sql.DB, target string) {
 func TestMigration038PopulatedPostgres(t *testing.T) {
 	db := postgresMigrationFixture(t)
 	_, err := db.Exec(`CREATE TABLE schema_migrations(version TEXT PRIMARY KEY,applied_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);
- CREATE TABLE tasks(id TEXT PRIMARY KEY);
+ CREATE TABLE tasks(id TEXT PRIMARY KEY, kind TEXT, status TEXT, parent_id TEXT, metadata TEXT);
  CREATE TABLE task_templates(id TEXT PRIMARY KEY, version INTEGER);
  CREATE TABLE sessions(id TEXT PRIMARY KEY);
  CREATE TABLE runs(id SERIAL PRIMARY KEY, task_id TEXT REFERENCES tasks(id));
@@ -73,7 +73,7 @@ func TestMigration038PopulatedSQLite(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 	_, err = db.Exec(`CREATE TABLE schema_migrations(version TEXT PRIMARY KEY,applied_at DATETIME DEFAULT CURRENT_TIMESTAMP);
- CREATE TABLE tasks(id TEXT PRIMARY KEY);
+ CREATE TABLE tasks(id TEXT PRIMARY KEY, kind TEXT, status TEXT, parent_id TEXT, metadata TEXT);
  CREATE TABLE task_templates(id TEXT PRIMARY KEY, version INTEGER);
  CREATE TABLE sessions(id TEXT PRIMARY KEY);
  CREATE TABLE runs(id INTEGER PRIMARY KEY, task_id TEXT REFERENCES tasks(id));

@@ -508,6 +508,7 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	}
 	if input.ParentID != "" {
 		rec.ParentID = sql.NullString{String: input.ParentID, Valid: true}
+		rec.PhaseID = s.phaseFromMetadata(input.ParentID, input.Metadata)
 	}
 
 	// depends_on lives in the task_dependencies join table (migration 027 /
@@ -537,7 +538,7 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		}
 		defer wtx.Rollback()
 		if err := wtx.CreateTask(rec); err != nil {
-			return nil, err
+			return nil, phaseValidation(err)
 		}
 		if explicitZeroRetries {
 			if err := wtx.SetTaskMaxRetries(id, 0); err != nil {
@@ -554,7 +555,7 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		}
 	} else {
 		if err := s.store.CreateTask(rec); err != nil {
-			return nil, err
+			return nil, phaseValidation(err)
 		}
 	}
 
@@ -792,8 +793,9 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 	// the title update against already-changed data. When neither tags nor
 	// depends_on is being touched, UpdateTask alone is already atomic (one
 	// SQL statement), so that path is left as a standalone call.
+	s.reconcilePhase(existing, &input)
 	if input.Tags == nil && input.DependsOn == nil {
-		return s.store.UpdateTask(id, input.TaskUpdate)
+		return phaseValidation(s.store.UpdateTask(id, input.TaskUpdate))
 	}
 
 	var slugs []string
@@ -812,7 +814,7 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 	defer wtx.Rollback()
 
 	if err := wtx.UpdateTask(id, input.TaskUpdate); err != nil {
-		return err
+		return phaseValidation(err)
 	}
 	if input.Tags != nil {
 		if err := wtx.SetTaskTags(id, slugs); err != nil {
@@ -825,6 +827,67 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		}
 	}
 	return wtx.Commit()
+}
+
+// phaseValidation reports a rejected phase membership as a ValidationError, so
+// callers see arg_invalid rather than a raw store error.
+func phaseValidation(err error) error {
+	if errors.Is(err, sqlstore.ErrInvalidPhase) {
+		return &ValidationError{Field: "phase_id", Message: err.Error()}
+	}
+	return err
+}
+
+// phaseFromMetadata is the compatibility path for the convention that a plan's
+// child names its phase in metadata.phase_id: when the parent is a plan, that
+// value becomes the task's phase_id (checked by the store). Under any other
+// parent, or with no value, the metadata is left to mean whatever the caller
+// meant by it.
+func (s *TaskService) phaseFromMetadata(parentID string, meta map[string]any) sql.NullString {
+	v, _ := meta["phase_id"].(string)
+	if v == "" || parentID == "" {
+		return sql.NullString{}
+	}
+	parent, err := s.store.GetTask(parentID)
+	if err != nil || parent.Kind != "plan" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: v, Valid: true}
+}
+
+// reconcilePhase keeps phase_id consistent with an update that touches
+// metadata.phase_id or the parent. A metadata.phase_id in the update under a
+// plan parent sets (or, if empty, clears) phase_id. Moving a task to another
+// parent drops its old phase unless the caller names a new one. An explicit
+// PhaseID on the input always wins.
+func (s *TaskService) reconcilePhase(existing *sqlstore.TaskRecord, input *TaskUpdateInput) {
+	if input.PhaseID != nil {
+		return
+	}
+	parent := existing.ParentID
+	if input.ParentID != nil {
+		parent = *input.ParentID
+	}
+	if input.Metadata != nil && input.Metadata.Valid && input.Metadata.String != "" {
+		var overlay map[string]any
+		if err := unmarshalJSON([]byte(input.Metadata.String), &overlay); err == nil {
+			if raw, ok := overlay["phase_id"]; ok && parent.Valid {
+				if ph, _ := raw.(string); ph != "" {
+					if set := s.phaseFromMetadata(parent.String, overlay); set.Valid {
+						input.PhaseID = &set
+						return
+					}
+				} else if p, err := s.store.GetTask(parent.String); err == nil && p.Kind == "plan" {
+					input.PhaseID = &sql.NullString{}
+					return
+				}
+			}
+		}
+	}
+	if input.ParentID != nil && existing.PhaseID.Valid &&
+		(!parent.Valid || parent.String != existing.ParentID.String) {
+		input.PhaseID = &sql.NullString{}
+	}
 }
 
 // Delete removes a task by ID.

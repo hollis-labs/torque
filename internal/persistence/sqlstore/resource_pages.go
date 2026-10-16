@@ -96,7 +96,7 @@ func resourcePredicates(resource string, f ResourcePageFilter) ([]string, []any)
 			}
 		}
 		if f.PhaseID != "" {
-			where = append(where, "json_extract(metadata, '$.phase_id') = ?")
+			where = append(where, "phase_id = ?")
 			args = append(args, f.PhaseID)
 		}
 		if f.Search != "" {
@@ -178,11 +178,6 @@ func (s *Store) CountResourcePage(resource string, f ResourcePageFilter) (int, e
 		return 0, err
 	}
 	where, args := resourcePredicates(resource, f)
-	if _, pg := s.dialect.(postgresDialect); pg {
-		for i := range where {
-			where[i] = strings.ReplaceAll(where[i], "json_extract(metadata, '$.phase_id')", "metadata->>'phase_id'")
-		}
-	}
 	q := "SELECT COUNT(*) FROM " + spec.table
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -208,11 +203,6 @@ func (s *Store) ListResourcePage(resource string, f ResourcePageFilter) ([]Resou
 		return nil, fmt.Errorf("invalid page bound")
 	}
 	where, args := resourcePredicates(resource, f)
-	if _, pg := s.dialect.(postgresDialect); pg {
-		for i := range where {
-			where[i] = strings.ReplaceAll(where[i], "json_extract(metadata, '$.phase_id')", "metadata->>'phase_id'")
-		}
-	}
 	orderCol := col
 	// emitted_at is the task-checkpoint creation timestamp.
 	if col == "emitted_at" {
