@@ -187,7 +187,7 @@ func TestPlanReopenPhase(t *testing.T) {
 	require.NoError(t, err)
 
 	var cErr *service.ConflictError
-	_, err = svc.Plan.ReopenPhase(plan.ID, "ph-1")
+	_, err = svc.Plan.ReopenPhase(context.Background(), plan.ID, "ph-1")
 	require.ErrorAs(t, err, &cErr, "a phase that is not completed cannot be reopened")
 
 	require.NoError(t, svc.Task.Transition(context.Background(), child.ID, "done"))
@@ -195,12 +195,12 @@ func TestPlanReopenPhase(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "completed", detail.Plan.Phases[0].State)
 
-	got, err := svc.Plan.ReopenPhase(plan.ID, "ph-1")
+	got, err := svc.Plan.ReopenPhase(context.Background(), plan.ID, "ph-1")
 	require.NoError(t, err)
 	require.Equal(t, "started", got.State)
 	require.Equal(t, 2, got.Generation)
 
 	var vErr *service.ValidationError
-	_, err = svc.Plan.ReopenPhase(plan.ID, "ph-9")
+	_, err = svc.Plan.ReopenPhase(context.Background(), plan.ID, "ph-9")
 	require.ErrorAs(t, err, &vErr)
 }
