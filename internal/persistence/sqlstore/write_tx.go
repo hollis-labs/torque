@@ -394,6 +394,25 @@ func (w *WriteTx) TransitionTaskWithReason(id, newStatus, reason string) error {
 	return w.TransitionTaskOpts(id, newStatus, TransitionOpts{Reason: &reason})
 }
 
+// TaskStatusLocked reads a task's status inside the transaction, taking a row
+// lock on Postgres (SQLite's BEGIN IMMEDIATE already serializes writers). A
+// caller that decided something from an earlier read uses it to confirm the
+// status is still what it saw before it writes events about that decision.
+func (w *WriteTx) TaskStatusLocked(id string) (string, error) {
+	q := `SELECT status FROM tasks WHERE id = ?`
+	if _, pg := w.store.dialect.(postgresDialect); pg {
+		q += ` FOR UPDATE`
+	}
+	var status string
+	if err := w.tx.QueryRow(q, id).Scan(&status); err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("task %s not found", id)
+		}
+		return "", err
+	}
+	return status, nil
+}
+
 // TransitionTaskOpts is the one task-transition writer: it updates the task,
 // appends the state event in the same transaction, and queues the in-process
 // hook for after commit.
