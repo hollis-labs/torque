@@ -33,12 +33,11 @@ func (s *Server) selfReport(w http.ResponseWriter, r *http.Request, data bool) {
 		return
 	}
 	in["task_id"] = id
-	tool := "torque_task_progress"
+	route := "POST /tasks/{id}/progress"
 	if data {
-		tool = "torque_task_data_emit"
+		route = "POST /tasks/{id}/data"
 	}
-	// These routes are agent self-report operations, including stdio proxies.
-	ctx := sqlstore.ContextWithTrigger(r.Context(), sqlstore.Trigger{Kind: sqlstore.TriggerAgent, Ref: tool})
+	ctx := httpTrigger(r, route).Context()
 	var out map[string]any
 	var err error
 	if data {
