@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	"log"
 	"time"
 
@@ -126,6 +127,9 @@ type SessionManager interface {
 // Start returns ErrAlreadyOrchestrating wrapping a Result so callers
 // can surface the existing session_id (HTTP 409).
 func Start(ctx context.Context, store Store, mgr SessionManager, planID string, opts Options) (res *Result, err error) {
+	if opts.ProgressDetail != "" && !catalog.ProgressDetail(opts.ProgressDetail).Valid() {
+		return nil, agent.ErrProgressDetailInvalid
+	}
 	if mgr == nil {
 		return nil, ErrSessionMgrMissing
 	}
@@ -288,6 +292,9 @@ func Start(ctx context.Context, store Store, mgr SessionManager, planID string, 
 // and leaves the plan's status untouched (a plan mid-walk is already in the
 // right status; Start's todo→doing transition does not apply here).
 func Redispatch(ctx context.Context, store RedispatchStore, mgr SessionManager, planID string, opts Options) (res *Result, err error) {
+	if opts.ProgressDetail != "" && !catalog.ProgressDetail(opts.ProgressDetail).Valid() {
+		return nil, agent.ErrProgressDetailInvalid
+	}
 	if mgr == nil {
 		return nil, ErrSessionMgrMissing
 	}

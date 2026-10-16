@@ -66,7 +66,13 @@ func (a *Adapter) registerSelfReportTools() {
 		}
 		// Torque's MCP transport wraps the catalog result in its standard envelope.
 		output := map[string]any{"type": "object", "required": []string{"ok", "data"}, "properties": map[string]any{"ok": map[string]any{"const": true}, "data": out}}
-		spec := toolSpec{Name: name, Description: schema["description"].(string) + " Unlike torque_task_checkpoint_emit, never parks. Requires torque.write.", Properties: schema["properties"].(map[string]any), Required: required, InputSchema: schema, OutputSchema: output}
+		description := schema["description"].(string) + "\nUnlike torque_task_checkpoint_emit, never parks. Requires torque.write. Keys are shared per task across both report tools."
+		if name == "torque_task_progress" {
+			description += "\nResponse shape: data = {emitted, event_id?, effective_level, detail_source, suppressed_reason?}. Only emitted calls record keys; duplicates return the original event_id.\nExample: {\"task_id\":\"T-1\",\"label\":\"Tests passed\",\"level\":\"milestone\",\"idempotency_key\":\"tests-1\"}"
+		} else {
+			description += "\nResponse shape: data = {event_id, data_ref, duplicate?}. Reusing a key for another input fails with idempotency_conflict.\nExample: {\"task_id\":\"T-1\",\"schema\":\"test-results@1\",\"data\":{\"passed\":true},\"idempotency_key\":\"results-1\"}"
+		}
+		spec := toolSpec{Name: name, Description: description, Properties: schema["properties"].(map[string]any), Required: required, InputSchema: schema, OutputSchema: output}
 		a.addTool(spec, func(ctx context.Context, in map[string]any) (any, error) { return a.handleSelfReport(ctx, name, in) })
 	}
 }

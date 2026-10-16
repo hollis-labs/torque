@@ -273,12 +273,13 @@ func TestRunLongLived_UnsignalledWorker(t *testing.T) {
 				RuntimeFactory: func(agentsessions.AdapterRuntimeConfig) (agentsessions.Runtime, error) { return fr, nil },
 				Reminder:       steering.NewReminderRegistry(),
 			}
+			runID := createLaunchTestRun(t, store, taskID)
 			deps.Sessions = NewManager(deps).WithIDFunc(func() string { return "SES-NUDGE" })
 
 			done := make(chan *executor.ExecutionResult, 1)
 			go func() {
 				res, err := NewExecutor(deps).Run(context.Background(), &executor.ExecutionJob{
-					TaskID: taskID, Kind: "agent", AgentProfile: "test", WorkingDir: t.TempDir(), RunID: 1,
+					TaskID: taskID, Kind: "agent", AgentProfile: "test", WorkingDir: t.TempDir(), RunID: runID,
 				}, nil)
 				assert.NoError(t, err)
 				done <- res
@@ -452,11 +453,12 @@ func startNudgeRun(t *testing.T, store *sqlstore.Store, taskID string, fr *nudge
 		RuntimeFactory: func(agentsessions.AdapterRuntimeConfig) (agentsessions.Runtime, error) { return fr, nil },
 		Reminder:       steering.NewReminderRegistry(),
 	}
+	runID := createLaunchTestRun(t, store, taskID)
 	deps.Sessions = NewManager(deps).WithIDFunc(func() string { return "SES-NUDGE" })
 	done := make(chan *executor.ExecutionResult, 1)
 	go func() {
 		res, err := NewExecutor(deps).Run(context.Background(), &executor.ExecutionJob{
-			TaskID: taskID, Kind: "agent", AgentProfile: "test", WorkingDir: t.TempDir(), RunID: 1,
+			TaskID: taskID, Kind: "agent", AgentProfile: "test", WorkingDir: t.TempDir(), RunID: runID,
 		}, nil)
 		assert.NoError(t, err)
 		done <- res

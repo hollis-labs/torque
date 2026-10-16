@@ -8,6 +8,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/planstart"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/service"
 )
 
@@ -290,6 +291,8 @@ func (a *Adapter) handlePlanStart(ctx context.Context, req map[string]any) (any,
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, agent.ErrProgressDetailInvalid):
+			return errResult(ErrCodeArgInvalid, err.Error(), "progress_detail")
 		case errors.Is(err, planstart.ErrAlreadyOrchestrating):
 			// AC5 idempotency: surface as code=conflict (matches the
 			// tool's documented contract) and embed the live session id

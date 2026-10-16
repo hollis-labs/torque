@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/planstart"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/service"
 )
 
@@ -200,6 +201,9 @@ func (s *Server) startPlan(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, agent.ErrProgressDetailInvalid):
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
 		case errors.Is(err, planstart.ErrAlreadyOrchestrating):
 			// Surface the existing session_id alongside the 409 so the
 			// GUI can route to its detail view.
