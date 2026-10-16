@@ -8,6 +8,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/planstart"
+	"github.com/hollis-labs/torque/internal/runtime/agent"
 	"github.com/hollis-labs/torque/internal/service"
 )
 
@@ -120,6 +121,7 @@ Response shape: data = {session_id, plan_id, started_at}. On 409: error contains
 Example: {"plan_id":"T-PLAN-1","workdir":"/tmp/plan"}`),
 		withString("plan_id", required(), desc("Plan task ID (kind=plan)")),
 		withString("workdir", desc("Orchestrator session workdir; defaults to plan.WorkingDir")),
+		withString("progress_detail", desc("Explicit launch progress detail: off, milestone, step or verbose")),
 	), a.handlePlanStart)
 }
 
@@ -284,10 +286,13 @@ func (a *Adapter) handlePlanStart(ctx context.Context, req map[string]any) (any,
 		return errResult(ErrCodeArgInvalid, "plan_id is required", "plan_id")
 	}
 	res, err := planstart.Start(ctx, a.svc.Store(), a.sessions, planID, planstart.Options{
-		Workdir: reqStr(req, "workdir"),
+		Workdir:        reqStr(req, "workdir"),
+		ProgressDetail: reqStr(req, "progress_detail"),
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, agent.ErrProgressDetailInvalid):
+			return errResult(ErrCodeArgInvalid, err.Error(), "progress_detail")
 		case errors.Is(err, planstart.ErrAlreadyOrchestrating):
 			// AC5 idempotency: surface as code=conflict (matches the
 			// tool's documented contract) and embed the live session id

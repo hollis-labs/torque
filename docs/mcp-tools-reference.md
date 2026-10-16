@@ -203,6 +203,31 @@ resolved behavior as `effective_review`; see `docs/review-routing.md`.
 
 ---
 
+### Non-parking task reports
+
+`torque_task_progress` and `torque_task_data_emit` use the released harness C4
+schemas in `catalog.ToolSchema`. See `internal/mcpadapter/self_report_tools.go`
+and `internal/service/self_report.go`. Both require `torque.write` and never
+change status, create a checkpoint, or park a task.
+
+Explicit session and plan-start launches accept `progress_detail`. Scheduler
+dispatch currently leaves its launch override unset and inherits task/template/default
+detail. Its context override is an unwired integration seam; a future caller must
+scope it to an individual task, never an entire scheduler tick.
+
+Progress resolves `progress_detail` from the explicit launch, the task's copied
+value and recorded origin, then the default `milestone`. The server persists a
+two-second limit per task/report level. Data reports bypass that setting and
+limit; inline objects are capped at 16 KiB, with larger content referenced by
+a same-task artifact ID. Run and artifact IDs are decimal strings.
+
+Both calls share a per-task idempotency-key space. Only an emitted report
+records its key. Same-input retries return the original event; changed input
+or cross-tool reuse returns `idempotency_conflict`. HTTP equivalents are
+`POST /api/v1/tasks/{id}/progress` and `/data`. Local stdio proxies these routes
+and fails if the daemon is unavailable; daemon MCP and session-bound loopback
+use the same transactional service directly.
+
 ## Tag
 
 Global tag catalog entity. Source: `internal/mcpadapter/tag_tools.go`.

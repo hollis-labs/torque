@@ -73,6 +73,7 @@ func NewLoopback(svc *service.Service, taskID string) *Adapter {
 }
 
 func (a *Adapter) registerLoopbackTools() {
+	a.registerSelfReportTools()
 	a.addTool(newTool("torque_task_summary",
 		withDescription(`Capture an agent-written summary of what was accomplished this turn. Persisted as a comment with author="agent" so the audit trail stays queryable via torque_comment_search.
 Use exactly once per turn, near the end, before the wrapper signals done. The wrapper drives the FSM transition; this is interpretive signal only.

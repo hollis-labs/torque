@@ -370,6 +370,7 @@ func TestRunLongLived_TaskDeadlineStopsSession(t *testing.T) {
 		},
 		Reminder: steering.NewReminderRegistry(),
 	}
+	runID := createLaunchTestRun(t, store, taskID)
 	deps.Sessions = NewManager(deps).WithIDFunc(func() string { return "SES-DEADLINE" })
 	agentExec := NewExecutor(deps)
 
@@ -378,7 +379,7 @@ func TestRunLongLived_TaskDeadlineStopsSession(t *testing.T) {
 		Kind:         "agent",
 		AgentProfile: "test",
 		WorkingDir:   t.TempDir(),
-		RunID:        1,
+		RunID:        runID,
 		Limits: executor.ExecutionLimits{
 			MaxDuration: &deadline,
 			MaxRetries:  0,
@@ -424,6 +425,7 @@ func TestRunLongLived_TaskDeadlineCoversLaunch(t *testing.T) {
 		},
 		Reminder: steering.NewReminderRegistry(),
 	}
+	runID := createLaunchTestRun(t, store, taskID)
 	deps.Sessions = NewManager(deps).WithIDFunc(func() string { return "SES-LAUNCH-DEADLINE" })
 	agentExec := NewExecutor(deps)
 
@@ -432,7 +434,7 @@ func TestRunLongLived_TaskDeadlineCoversLaunch(t *testing.T) {
 		Kind:         "agent",
 		AgentProfile: "test",
 		WorkingDir:   t.TempDir(),
-		RunID:        1,
+		RunID:        runID,
 		Limits: executor.ExecutionLimits{
 			MaxDuration: &deadline,
 			MaxRetries:  0,
@@ -475,6 +477,7 @@ func TestRunLongLived_UpstreamDeadlineIsNotTaskDeadline(t *testing.T) {
 		},
 		Reminder: steering.NewReminderRegistry(),
 	}
+	runID := createLaunchTestRun(t, store, taskID)
 	deps.Sessions = NewManager(deps).WithIDFunc(func() string { return "SES-UPSTREAM-DEADLINE" })
 	agentExec := NewExecutor(deps)
 
@@ -485,7 +488,7 @@ func TestRunLongLived_UpstreamDeadlineIsNotTaskDeadline(t *testing.T) {
 		Kind:         "agent",
 		AgentProfile: "test",
 		WorkingDir:   t.TempDir(),
-		RunID:        1,
+		RunID:        runID,
 		Limits: executor.ExecutionLimits{
 			MaxDuration: &maxDuration,
 			MaxRetries:  0,
@@ -695,6 +698,7 @@ func TestRunLongLived_OperatorPauseCancelsRunAndSession(t *testing.T) {
 		},
 		Reminder: steering.NewReminderRegistry(),
 	}
+	runID := createLaunchTestRun(t, store, taskID)
 	deps.Sessions = NewManager(deps).WithIDFunc(func() string { return "SES-PAUSE" })
 	agentExec := NewExecutor(deps)
 
@@ -710,7 +714,7 @@ func TestRunLongLived_OperatorPauseCancelsRunAndSession(t *testing.T) {
 			Kind:         "agent",
 			AgentProfile: "test",
 			WorkingDir:   t.TempDir(),
-			RunID:        1,
+			RunID:        runID,
 		}, nil)
 		if err != nil {
 			errCh <- err

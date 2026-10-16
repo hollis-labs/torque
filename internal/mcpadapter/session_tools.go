@@ -29,6 +29,7 @@ workdir and repo_root must be existing absolute paths inside registered project 
 Example: {"agent_profile":"default","workdir":"/path/to/registered/repo","task_id":"T-123"}`),
 		withString("launch_profile", desc("Torque launch_profile id (preferred). When set, drives the stable launch family resolution.")),
 		withString("agent_profile", desc("Legacy agent_profile name. Honored when launch_profile is empty.")),
+		withString("progress_detail", desc("Explicit launch progress detail: off, milestone, step or verbose; empty inherits")),
 		withString("workdir", required(), desc("Existing absolute working directory within registered project roots or TORQUE_SESSION_ALLOWED_ROOTS; control-plane paths and their ancestors are forbidden")),
 		withString("repo_root", desc("Canonical repository root; defaults to workdir and obeys the same path policy")),
 		withString("project_id", desc("Optional project soft-FK")),
@@ -184,18 +185,22 @@ func (a *Adapter) handleSessionCreate(ctx context.Context, req map[string]any) (
 		return nil, res
 	}
 	sess, err := mgr.BootExternal(ctx, agent.Options{
-		Mode:          agent.ModeLongLived,
-		LaunchProfile: launchProfile,
-		AgentProfile:  agentProfile,
-		Workdir:       reqStr(req, "workdir"),
-		RepoRoot:      reqStr(req, "repo_root"),
-		ProjectID:     reqStr(req, "project_id"),
-		TaskID:        reqStr(req, "task_id"),
-		SystemPrompt:  reqStr(req, "system_prompt"),
-		Env:           env,
-		SessionMeta:   meta,
+		Mode:           agent.ModeLongLived,
+		LaunchProfile:  launchProfile,
+		ProgressDetail: reqStr(req, "progress_detail"),
+		AgentProfile:   agentProfile,
+		Workdir:        reqStr(req, "workdir"),
+		RepoRoot:       reqStr(req, "repo_root"),
+		ProjectID:      reqStr(req, "project_id"),
+		TaskID:         reqStr(req, "task_id"),
+		SystemPrompt:   reqStr(req, "system_prompt"),
+		Env:            env,
+		SessionMeta:    meta,
 	})
 	if err != nil {
+		if errors.Is(err, agent.ErrProgressDetailInvalid) {
+			return errResult(ErrCodeArgInvalid, err.Error(), "progress_detail")
+		}
 		if errors.Is(err, agent.ErrLaunchPathRefused) {
 			return errResult(ErrCodeArgInvalid, err.Error(), "workdir/repo_root")
 		}

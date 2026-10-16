@@ -35,10 +35,11 @@ func items(schema map[string]any) propOpt {
 }
 
 type toolSpec struct {
-	Name        string
-	Description string
-	Properties  map[string]any
-	Required    []string
+	InputSchema, OutputSchema any
+	Name                      string
+	Description               string
+	Properties                map[string]any
+	Required                  []string
 }
 
 type toolOpt func(*toolSpec)

@@ -107,11 +107,15 @@ func TestBootCopilotACP_OneShot(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
-		TaskID: "CW-ACP-ONESHOT", TaskTitle: "Say hello", RunID: 7, AgentProfile: "worker",
+		TaskID: "CW-ACP-ONESHOT", TaskTitle: "Say hello", RunID: createBootRun(t, cd.Store, "CW-ACP-ONESHOT"), ProgressDetail: "verbose", AgentProfile: "worker",
 		Workdir: t.TempDir(), Mode: agent.ModeOneShot, Description: "say hello",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, agent.StatusDone, sess.Status, "the replayed copilot turn must complete the one-shot run")
+	record, err := cd.Store.GetSession(sess.ID)
+	require.NoError(t, err)
+	require.Equal(t, "verbose", record.ProgressDetail.String)
+	require.True(t, record.RunID.Valid)
 	assert.Equal(t, string(runtimes.ModeACPStdio), sess.RuntimeKind)
 	assert.Empty(t, sess.BootDir, "an ACP session plants no boot dir")
 
@@ -305,7 +309,7 @@ func TestBootCopilotACP_LongLivedTaskRunRefusedWithoutHTTPMCP(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_, err := cd.Manager.Boot(ctx, agent.Options{
-		TaskID: "CW-ACP-NO-HTTP", RunID: 43, AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived,
+		TaskID: "CW-ACP-NO-HTTP", RunID: createBootRun(t, cd.Store, "CW-ACP-NO-HTTP"), AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived,
 	})
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, agent.ErrAdapterNotFound), "%v", err)

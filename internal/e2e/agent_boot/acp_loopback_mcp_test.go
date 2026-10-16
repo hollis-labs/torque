@@ -191,7 +191,7 @@ func TestBootCopilotACP_WorkerCallsLoopbackMCP(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	sess, err := cd.Manager.Boot(ctx, agent.Options{
-		TaskID: taskID, RunID: 61, AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived,
+		TaskID: taskID, RunID: createBootRun(t, cd.Store, taskID), AgentProfile: "worker", Workdir: t.TempDir(), Mode: agent.ModeLongLived,
 		Env: map[string]string{"TORQUE_TEST_ACP_AGENT": "1", "TORQUE_TEST_ACP_RECORD": record},
 	})
 	require.NoError(t, err, "a Copilot long-lived task run launches: Copilot takes HTTP MCP servers")

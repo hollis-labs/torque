@@ -59,3 +59,10 @@ func shutdownLoopbackHandle(h LoopbackHandle) {
 	defer cancel()
 	_ = h.Shutdown(ctx)
 }
+
+// Bind the launch through a daemon-owned handle, never a report argument.
+func bindReportSession(handle LoopbackHandle, id string) {
+	if bound, ok := handle.(interface{ BindReportSession(string) }); ok {
+		bound.BindReportSession(id)
+	}
+}

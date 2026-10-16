@@ -2,6 +2,7 @@ package agent_boot
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,7 +42,8 @@ exit 1
 	cd.Deps.Profiles = config.ProfileMap{"worker": {Executor: "cli", Provider: "opencode"}}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	const sessID, runID = "SES-REDACT", 4242
+	const sessID = "SES-REDACT"
+	runID := createBootRun(t, cd.Store, "CW-REDACT")
 	_, err := cd.Manager.Boot(ctx, agent.Options{
 		TaskID: "CW-REDACT", AgentProfile: "worker", Workdir: t.TempDir(), RunID: runID,
 		Mode: agent.ModeLongLived, IDFn: func() string { return sessID },
@@ -56,7 +58,7 @@ exit 1
 	for _, path := range []string{
 		filepath.Join(logs, "session.log"),
 		filepath.Join(logs, "stream.jsonl"),
-		filepath.Join(dataDir, "runs", "4242.stderr.log"),
+		filepath.Join(dataDir, "runs", fmt.Sprintf("%d.stderr.log", runID)),
 	} {
 		b, err := os.ReadFile(path)
 		require.NoError(t, err)

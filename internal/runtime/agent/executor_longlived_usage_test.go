@@ -163,10 +163,11 @@ func runFixtureLongLived(t *testing.T, lines []string, split int, grace, delay t
 		},
 		Reminder: steering.NewReminderRegistry(),
 	}
+	runID := createLaunchTestRun(t, store, taskID)
 	deps.Sessions = NewManager(deps).WithIDFunc(func() string { return "SES-USAGE" })
 
 	result, err := NewExecutor(deps).Run(context.Background(), &executor.ExecutionJob{
-		TaskID: taskID, Kind: "agent", AgentProfile: "test", WorkingDir: t.TempDir(), RunID: 1,
+		TaskID: taskID, Kind: "agent", AgentProfile: "test", WorkingDir: t.TempDir(), RunID: runID,
 	}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result)

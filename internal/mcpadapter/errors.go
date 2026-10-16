@@ -158,6 +158,10 @@ func errResult(code ErrorCode, message, field string) (any, error) {
 // service error is ambiguous or maps poorly, fix it in a follow-up ticket
 // rather than piling special cases here.
 func mapServiceError(err error) (ErrorCode, string, string) {
+	var report *service.SelfReportError
+	if errors.As(err, &report) {
+		return ErrorCode(report.Code), report.Message, ""
+	}
 	if err == nil {
 		return ErrCodeInternal, "unknown error", ""
 	}

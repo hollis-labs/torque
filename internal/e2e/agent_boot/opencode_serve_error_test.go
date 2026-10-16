@@ -127,7 +127,7 @@ func runOpencodeServeTurn(t *testing.T, ocSession string, events []string) (*exe
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	res, err := agent.NewExecutor(cd.Deps).Run(ctx, &executor.ExecutionJob{
-		TaskID: taskID, Kind: "agent", AgentProfile: "worker", WorkingDir: t.TempDir(), RunID: 1,
+		TaskID: taskID, Kind: "agent", AgentProfile: "worker", WorkingDir: t.TempDir(), RunID: createBootRun(t, cd.Store, taskID),
 	}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, res)

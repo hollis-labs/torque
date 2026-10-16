@@ -17,12 +17,13 @@ type ExecutionJob struct {
 	// default to ModeLongLived (workers stay resident; explicit completion
 	// signal + heartbeat-driven idle reap), other kinds default to ModeOneShot
 	// (planner / reviewer-end-agent / bounded mechanical work).
-	Kind         string
-	TaskStatus   string
-	TaskPriority int
-	RunID        int64
-	Description  string
-	SystemPrompt string
+	Kind           string
+	TaskStatus     string
+	TaskPriority   int
+	RunID          int64
+	ProgressDetail string
+	Description    string
+	SystemPrompt   string
 	// AgentFile is the task's agent_file field verbatim: absolute path, or
 	// path relative to WorkingDir. The executor is responsible for resolving
 	// and loading it at dispatch (see internal/agentfile). Empty when unset.

@@ -30,11 +30,14 @@ import (
 // free of mcpadapter — that direction would close the planstart → agent →
 // mcpadapter → planstart cycle introduced by the Boot unification.
 type loopbackHandle struct {
+	adapter  *mcpadapter.Adapter
 	url      string
 	httpSrv  *http.Server
 	listener net.Listener
 	serveErr chan error
 }
+
+func (h *loopbackHandle) BindReportSession(id string) { h.adapter.BindReportSession(id) }
 
 // URL returns the address planted into .mcp.json. Satisfies agent.LoopbackHandle.
 func (h *loopbackHandle) URL() string {
@@ -167,6 +170,7 @@ func loopbackBuilder(svc *service.Service, sessionsRef func() *agent.Manager, po
 		}
 
 		h := &loopbackHandle{
+			adapter:  loopback,
 			url:      fmt.Sprintf("http://127.0.0.1:%d/mcp", tcpAddr.Port),
 			httpSrv:  httpSrv,
 			listener: ln,
