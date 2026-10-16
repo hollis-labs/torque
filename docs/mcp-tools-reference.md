@@ -211,9 +211,9 @@ and `internal/service/self_report.go`. Both require `torque.write` and never
 change status, create a checkpoint, or park a task.
 
 Explicit session and plan-start launches accept `progress_detail`. Scheduler
-dispatch currently leaves its launch override unset and inherits task/template/default
-detail. Its context override is an unwired integration seam; a future caller must
-scope it to an individual task, never an entire scheduler tick.
+dispatch leaves its launch override unset by design: no caller supplied a setting
+for that launch, so reports inherit task/template/default detail. Copying the task
+setting into the launch slot would incorrectly label its source as `launch`.
 
 Progress resolves `progress_detail` from the explicit launch, the task's copied
 value and recorded origin, then the default `milestone`. The server persists a
