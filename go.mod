@@ -9,6 +9,7 @@ require (
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/google/uuid v1.6.0
 	github.com/hollis-labs/libs/plugin-mcp v0.2.0
+	github.com/hollis-labs/libs/security/auth v0.1.0
 	github.com/hollis-labs/libs/util v0.2.1
 	github.com/hollis-labs/plugin v0.0.0-20260410030617-741878c627b2
 	github.com/hollis-labs/substrate/agent v0.3.0

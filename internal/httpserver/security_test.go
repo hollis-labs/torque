@@ -1,10 +1,22 @@
 package httpserver_test
 
 import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/hollis-labs/libs/security/auth"
 
 	"github.com/hollis-labs/torque/internal/httpserver"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -170,4 +182,69 @@ func TestCORS_NoWildcard(t *testing.T) {
 	assert.NotEqual(t, "*", resp.Header.Get("Access-Control-Allow-Origin"))
 	resp = do(t, http.MethodGet, ts.URL+"/api/v1/tasks", nil)
 	assert.Empty(t, resp.Header.Get("Access-Control-Allow-Origin"))
+}
+
+func newGuardServer(t *testing.T, mode auth.Mode, token string) *httptest.Server {
+	t.Helper()
+	g, err := httpserver.NewGuard(context.Background(), httpserver.AuthConfig{Mode: mode, StaticToken: token})
+	require.NoError(t, err)
+	return setupSecuredServer(t, httpserver.Security{Token: token, Guard: g})
+}
+
+// Default (off) mode must leave the legacy gate exactly as it was.
+func TestGuardOff_LegacyBehaviourUnchanged(t *testing.T) {
+	ts := newGuardServer(t, auth.ModeOff, "s3cret")
+	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", nil).StatusCode)
+	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", map[string]string{"Authorization": "Bearer nope"}).StatusCode)
+	assert.Equal(t, http.StatusOK, do(t, "GET", ts.URL+"/api/v1/tasks", map[string]string{"Authorization": "Bearer s3cret"}).StatusCode)
+}
+
+func TestGuardOff_NoTokenStaysLoopbackOnly(t *testing.T) {
+	ts := newGuardServer(t, auth.ModeOff, "")
+	assert.Equal(t, http.StatusOK, do(t, "GET", ts.URL+"/api/v1/tasks", nil).StatusCode)
+	assert.Equal(t, http.StatusForbidden, do(t, "GET", ts.URL+"/api/v1/tasks", map[string]string{"Host": "evil.example"}).StatusCode)
+}
+
+func TestGuardEnforce_StaticTokenStillWorksAndAnonymousIsRejected(t *testing.T) {
+	ts := newGuardServer(t, auth.ModeEnforce, "s3cret")
+	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", nil).StatusCode)
+	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", map[string]string{"Authorization": "Bearer nope"}).StatusCode)
+	assert.Equal(t, http.StatusOK, do(t, "GET", ts.URL+"/api/v1/tasks", map[string]string{"Authorization": "Bearer s3cret"}).StatusCode)
+}
+
+func TestGuardEnforce_NoTokenConfiguredRejectsAnonymous(t *testing.T) {
+	ts := newGuardServer(t, auth.ModeEnforce, "")
+	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", nil).StatusCode)
+}
+
+func TestGuardJWT_VerifiedTokenAdmittedUnderLegacyTokenAndEnforce(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	require.NoError(t, err)
+	keyFile := filepath.Join(t.TempDir(), "issuer.pub.pem")
+	require.NoError(t, os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0o600))
+	mint := func(aud, scope string) string {
+		enc := func(v any) string { b, _ := json.Marshal(v); return base64.RawURLEncoding.EncodeToString(b) }
+		in := enc(map[string]any{"alg": "EdDSA", "typ": "JWT"}) + "." + enc(map[string]any{
+			"iss": "https://tether.test", "sub": "agent/x", "aud": aud, "scope": scope, "kind": "agent",
+			"exp": time.Now().Add(time.Minute).Unix(), "jti": "j1"})
+		return in + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(priv, []byte(in)))
+	}
+	for _, mode := range []auth.Mode{auth.ModeOff, auth.ModePermissive, auth.ModeEnforce} {
+		g, err := httpserver.NewGuard(context.Background(), httpserver.AuthConfig{
+			Mode: mode, Issuer: "https://tether.test", BootstrapKeyFile: keyFile, StaticToken: "s3cret"})
+		require.NoError(t, err)
+		ts := setupSecuredServer(t, httpserver.Security{Token: "s3cret", Guard: g})
+		bearer := func(tok string) map[string]string { return map[string]string{"Authorization": "Bearer " + tok} }
+		assert.Equal(t, http.StatusOK, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(mint("torque", "torque.read"))).StatusCode, mode)
+		assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(mint("tesseract", "torque.read"))).StatusCode, mode)
+		if mode != auth.ModeEnforce {
+			// Under-scoped JWT must not bypass the legacy token gate.
+			assert.Equal(t, http.StatusUnauthorized, do(t, "POST", ts.URL+"/api/v1/tasks", bearer(mint("torque", "torque.read"))).StatusCode)
+		}
+		if mode == auth.ModeEnforce {
+			assert.Equal(t, http.StatusForbidden, do(t, "POST", ts.URL+"/api/v1/tasks", bearer(mint("torque", "torque.read"))).StatusCode)
+		}
+	}
 }
