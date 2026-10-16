@@ -35,16 +35,20 @@ type Server struct {
 	// security is the /api auth and browser-origin policy. The zero value
 	// is the loopback default. Set via WithSecurity.
 	security Security
+	version  string
+	commit   string
 }
 
 // New constructs an HTTP server with routes registered.
 // sched may be nil — handlers that need it will return 503.
 func New(svc *service.Service, sched *scheduler.Scheduler) *Server {
 	s := &Server{
-		svc:    svc,
-		sched:  sched,
-		router: chi.NewRouter(),
-		sse:    NewSSEHub(),
+		svc:     svc,
+		sched:   sched,
+		router:  chi.NewRouter(),
+		sse:     NewSSEHub(),
+		version: "dev",
+		commit:  "unknown",
 	}
 	s.routes()
 	return s
@@ -88,6 +92,8 @@ func (s *Server) routes() {
 	r := s.router
 
 	r.Use(middleware.Recoverer)
+	// Public liveness probe, outside the authenticated API and SPA fallback.
+	r.Get("/healthz", s.healthz)
 	// No middleware.RealIP: it rewrites RemoteAddr from client-supplied
 	// X-Real-IP / X-Forwarded-For, which let any caller claim to be
 	// loopback and pass adminGate (CW-20260930-0224). RemoteAddr is the TCP

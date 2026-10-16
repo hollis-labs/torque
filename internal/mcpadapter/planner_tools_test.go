@@ -1,6 +1,7 @@
 package mcpadapter_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/mcpadapter"
@@ -162,6 +163,48 @@ func TestPlannerToolsDecisionsAndInbox(t *testing.T) {
 	plannerTool(t, a, "torque_planner_inbox_add", map[string]any{"title": "noise"})
 	dis := plannerTool(t, a, "torque_planner_inbox_dismiss", map[string]any{"id": "IN-002", "note": "dup"})
 	assert.Equal(t, "dismissed", dis["status"])
+}
+
+func TestPlannerInboxAddAllocatesAfterDismissedMaxID(t *testing.T) {
+	var collisionIDs []string
+	for n := 8; n <= 22; n++ {
+		collisionIDs = append(collisionIDs, fmt.Sprintf("IN-%03d", n))
+	}
+	for _, tc := range []struct {
+		name     string
+		ids      []string
+		want     string
+		wantNext string
+	}{
+		{"gaps and decimal digits", []string{"IN-001", "IN-017", "IN-019"}, "IN-020", "IN-021"},
+		{"IN-019 collision", collisionIDs, "IN-023", "IN-024"},
+		{"width rollover", []string{"IN-001", "IN-999"}, "IN-1000", "IN-1001"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := setupPlannerAdapter(t)
+			for _, id := range tc.ids {
+				plannerTool(t, a, "torque_planner_create", map[string]any{
+					"db": "inbox", "item": map[string]any{"id": id, "title": "Existing " + id},
+				})
+			}
+			maxID := tc.ids[len(tc.ids)-1]
+			plannerTool(t, a, "torque_planner_inbox_dismiss", map[string]any{"id": maxID})
+
+			added := plannerTool(t, a, "torque_planner_inbox_add", map[string]any{"title": "After gaps and dismissal"})
+			require.Equal(t, tc.want, added["id"], "allocate above the numeric maximum, including dismissed items")
+			plannerTool(t, a, "torque_planner_inbox_dismiss", map[string]any{"id": tc.want})
+			next := plannerTool(t, a, "torque_planner_inbox_add", map[string]any{"title": "After another dismissal"})
+			assert.Equal(t, tc.wantNext, next["id"], "dismissal must not release an ID for reuse")
+
+			for _, id := range tc.ids {
+				existing := plannerTool(t, a, "torque_planner_get", map[string]any{"db": "inbox", "id": id})
+				assert.Equal(t, "Existing "+id, existing["title"])
+				if id == maxID {
+					assert.Equal(t, "dismissed", existing["status"])
+				}
+			}
+		})
+	}
 }
 
 func TestPlannerBoardTool(t *testing.T) {
