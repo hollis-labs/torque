@@ -36,7 +36,7 @@ Existing callers keep working. A child created or updated under a plan with
 has no such phase), and `Get` still returns `{id, name, order, acceptance?}`
 phases at `plan.phases` and `task.metadata.plan.phases`, now built from the
 records with `state` and `lifecycle_generation` added. Nothing writes
-`metadata.plan.phases` any more. Migration 043 backfilled phases and memberships
+`metadata.plan.phases` any more: on a raw task read (`task_get`, `task_list`, `plan_list`) it is a frozen legacy copy, left in place so a code revert still has the old data; only the plan endpoints overlay the records. Migration 043 backfilled phases and memberships
 from the old metadata; a child naming a phase its plan does not have was not
 given one and is listed in `plan_phase_repairs`.
 

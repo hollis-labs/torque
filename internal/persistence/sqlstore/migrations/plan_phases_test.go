@@ -54,6 +54,15 @@ func TestMigration043PlanPhasesBackfillSQLite(t *testing.T) {
 		`{"plan":{"version":1,"phases":[{"id":"ph-1","name":"Build","order":1,"acceptance":"works"},{"id":"ph-2","name":"Ship","order":2},{"id":"ph-1","name":"dup","order":9},{"name":"no id"}]}}`)
 	insertTask(t, db, "P2", "plan", "todo", "", `not json`)
 	insertTask(t, db, "P3", "plan", "todo", "", "")
+	// Free-form metadata via task_update: phases that is not an array, an array
+	// with non-objects, a non-object plan, a non-object top level. None may
+	// stop the migration; the objects among them still count.
+	insertTask(t, db, "P4", "plan", "todo", "", `{"plan":{"phases":"oops"}}`)
+	insertTask(t, db, "P5", "plan", "todo", "", `{"plan":{"phases":["ph-1",{"id":"ph-2","name":"Real"},7,null,["x"]]}}`)
+	insertTask(t, db, "P6", "plan", "todo", "", `{"plan":"nope"}`)
+	insertTask(t, db, "P7", "plan", "todo", "", `[1,2,3]`)
+	insertTask(t, db, "P8", "plan", "todo", "", `{"plan":{"phases":{"id":"ph-1"}}}`)
+	insertTask(t, db, "P9", "plan", "todo", "", `{"plan":{"phases":[{"id":5},{"id":""},{"name":"x"}]}}`)
 	// ph-1: all children done -> completed. ph-2: one doing -> started.
 	insertTask(t, db, "C1", "agent", "done", "P1", `{"phase_id":"ph-1"}`)
 	insertTask(t, db, "C2", "agent", "done", "P1", `{"phase_id":"ph-1"}`)
@@ -85,7 +94,9 @@ func TestMigration043PlanPhasesBackfillSQLite(t *testing.T) {
 		got[k] = p
 	}
 	require.NoError(t, rows.Err())
-	require.Len(t, got, 2, "duplicate and id-less phases are dropped; bad metadata yields none")
+	require.Len(t, got, 4, "duplicate and id-less phases are dropped; bad metadata yields none; objects among junk still count")
+	require.Equal(t, "Real", got["P5/ph-2"].name)
+	require.Contains(t, got, "P9/5", "a numeric id is kept as text")
 	require.Equal(t, "Build", got["P1/ph-1"].name, "first duplicate wins")
 	require.Equal(t, "works", got["P1/ph-1"].acceptance)
 	require.Equal(t, "completed", got["P1/ph-1"].state)

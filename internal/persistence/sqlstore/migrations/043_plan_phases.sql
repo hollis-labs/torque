@@ -57,10 +57,12 @@ SELECT t.id,
        COALESCE(json_extract(p.value, '$.name'), ''),
        COALESCE(json_extract(p.value, '$.order'), 0),
        COALESCE(json_extract(p.value, '$.acceptance'), '')
-  FROM tasks t, json_each(CASE WHEN t.kind = 'plan' AND json_valid(t.metadata)
-                               THEN json_extract(t.metadata, '$.plan.phases') END) p
- WHERE json_extract(p.value, '$.id') IS NOT NULL
-   AND json_extract(p.value, '$.id') <> '';
+  FROM tasks t,
+       json_each(CASE WHEN t.kind = 'plan' AND json_valid(t.metadata)
+                       AND json_type(t.metadata, '$.plan.phases') = 'array'
+                      THEN json_extract(t.metadata, '$.plan.phases') END) p
+ WHERE p.type = 'object'
+   AND COALESCE(CASE WHEN p.type = 'object' THEN json_extract(p.value, '$.id') END, '') <> '';
 
 -- Memberships: a child of a plan whose metadata.phase_id names one of its phases.
 UPDATE tasks

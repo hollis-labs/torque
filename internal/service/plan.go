@@ -142,7 +142,13 @@ func (s *PlanService) Create(input PlanCreateInput) (*sqlstore.TaskRecord, error
 	}
 	if len(phases) > 0 {
 		if _, err := s.store.AddPlanPhases(context.Background(), task.ID, phases); err != nil {
-			return nil, fmt.Errorf("plan %s created but its phases were not: %w", task.ID, err)
+			// The task and its phases are two writes (TaskService.Create owns the
+			// task's validation, id and tags), so undo the first rather than
+			// leave a plan with no phases.
+			if delErr := s.tasks.Delete(task.ID); delErr != nil {
+				return nil, fmt.Errorf("plan %s created but its phases were not (%v), and removing it failed: %w", task.ID, err, delErr)
+			}
+			return nil, fmt.Errorf("create plan phases: %w", err)
 		}
 	}
 	// Return the task as a reader sees it, with the phase projection applied.
