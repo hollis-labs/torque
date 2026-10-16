@@ -38,15 +38,18 @@ CREATE TABLE IF NOT EXISTS plan_phases (
 ALTER TABLE tasks ADD COLUMN phase_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_tasks_parent_phase ON tasks(parent_id, phase_id) WHERE phase_id IS NOT NULL;
 
--- Child memberships that name a phase the plan does not have. They are listed
--- here for repair instead of being given an invented phase.
+-- Things the backfill could not turn into records, listed here for repair
+-- instead of failing the migration or inventing data: a child that names a phase
+-- its plan does not have, and a plan whose metadata.plan.phases is not an array
+-- or holds an entry that is not an object with a text id (task_id is then the
+-- plan, phase_id empty).
 CREATE TABLE IF NOT EXISTS plan_phase_repairs (
     task_id    TEXT NOT NULL,
     plan_id    TEXT,
     phase_id   TEXT NOT NULL,
     reason     TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (task_id)
+    PRIMARY KEY (task_id, reason)
 );
 
 -- One-time backfill from metadata.plan.phases. A phase listed twice keeps its
@@ -62,7 +65,28 @@ SELECT t.id,
                        AND json_type(t.metadata, '$.plan.phases') = 'array'
                       THEN json_extract(t.metadata, '$.plan.phases') END) p
  WHERE p.type = 'object'
+   AND COALESCE(CASE WHEN p.type = 'object' THEN json_type(p.value, '$.id') = 'text' END, 0)
    AND COALESCE(CASE WHEN p.type = 'object' THEN json_extract(p.value, '$.id') END, '') <> '';
+
+-- A plan whose phases value is not an array.
+INSERT OR IGNORE INTO plan_phase_repairs (task_id, plan_id, phase_id, reason)
+SELECT t.id, t.id, '', 'metadata.plan.phases is not an array'
+  FROM tasks t
+ WHERE t.kind = 'plan' AND json_valid(t.metadata)
+   AND json_type(t.metadata, '$.plan.phases') IS NOT NULL
+   AND json_type(t.metadata, '$.plan.phases') NOT IN ('array', 'null');
+
+-- A plan with an entry that is not an object with a non-empty text id.
+INSERT OR IGNORE INTO plan_phase_repairs (task_id, plan_id, phase_id, reason)
+SELECT t.id, t.id, '', 'a metadata.plan.phases entry is not an object with a text id and was skipped'
+  FROM tasks t,
+       json_each(CASE WHEN t.kind = 'plan' AND json_valid(t.metadata)
+                       AND json_type(t.metadata, '$.plan.phases') = 'array'
+                      THEN json_extract(t.metadata, '$.plan.phases') END) p
+ WHERE NOT COALESCE(
+         CASE WHEN p.type = 'object'
+              THEN json_type(p.value, '$.id') = 'text' AND json_extract(p.value, '$.id') <> ''
+         END, 0);
 
 -- Memberships: a child of a plan whose metadata.phase_id names one of its phases.
 UPDATE tasks

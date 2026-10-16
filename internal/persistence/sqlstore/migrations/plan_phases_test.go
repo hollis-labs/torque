@@ -94,9 +94,9 @@ func TestMigration043PlanPhasesBackfillSQLite(t *testing.T) {
 		got[k] = p
 	}
 	require.NoError(t, rows.Err())
-	require.Len(t, got, 4, "duplicate and id-less phases are dropped; bad metadata yields none; objects among junk still count")
+	require.Len(t, got, 3, "duplicate, id-less and non-text-id phases are dropped; bad metadata yields none; objects among junk still count")
 	require.Equal(t, "Real", got["P5/ph-2"].name)
-	require.Contains(t, got, "P9/5", "a numeric id is kept as text")
+	require.NotContains(t, got, "P9/5", "a numeric id is not a phase id")
 	require.Equal(t, "Build", got["P1/ph-1"].name, "first duplicate wins")
 	require.Equal(t, "works", got["P1/ph-1"].acceptance)
 	require.Equal(t, "completed", got["P1/ph-1"].state)
@@ -119,8 +119,28 @@ func TestMigration043PlanPhasesBackfillSQLite(t *testing.T) {
 	var repairs int
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM plan_phase_repairs WHERE task_id IN ('C5','C6','C8')`).Scan(&repairs))
 	require.Equal(t, 3, repairs)
+	// Malformed plans are listed against the plan, not silently dropped:
+	// P4 (phases not an array), P5 and P9 (entries without a text id), P8
+	// (phases an object). P6, P7 and P2 have no phases value to report on.
+	planRepairs := map[string]string{}
+	rows2, err := db.Query(`SELECT task_id, reason FROM plan_phase_repairs WHERE task_id LIKE 'P%'`)
+	require.NoError(t, err)
+	for rows2.Next() {
+		var id, reason string
+		require.NoError(t, rows2.Scan(&id, &reason))
+		planRepairs[id] = reason
+	}
+	require.NoError(t, rows2.Err())
+	require.Len(t, planRepairs, 5, "P1 (id-less entry), P4, P5, P8, P9")
+	require.Contains(t, planRepairs["P4"], "not an array")
+	require.Contains(t, planRepairs["P8"], "not an array")
+	require.Contains(t, planRepairs["P5"], "entry is not an object with a text id")
+	require.Contains(t, planRepairs["P9"], "entry is not an object with a text id")
+	require.Contains(t, planRepairs["P1"], "entry is not an object with a text id")
+	require.NotContains(t, planRepairs, "P6")
+	require.NotContains(t, planRepairs, "P7")
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM plan_phase_repairs`).Scan(&repairs))
-	require.Equal(t, 3, repairs)
+	require.Equal(t, 8, repairs)
 
 	// The triggers do not fire on unrelated updates to a flagged row.
 	_, err = db.Exec(`UPDATE tasks SET status = 'review', title = 'renamed' WHERE id IN ('C5','C8')`)
@@ -206,6 +226,13 @@ func TestMigration043PlanPhasesPostgres(t *testing.T) {
 	ins("C7", "agent", "todo", "P1", `{{`)
 	ins("D1", "decision", "done", "", "")
 	ins("C8", "agent", "done", "D1", `{"phase_id":"ph-5"}`)
+	// Malformed plan metadata must not stop the migration.
+	ins("P4", "plan", "todo", "", `{"plan":{"phases":"oops"}}`)
+	ins("P5", "plan", "todo", "", `{"plan":{"phases":["ph-1",{"id":"ph-2","name":"Real"},7,null,["x"]]}}`)
+	ins("P6", "plan", "todo", "", `{"plan":"nope"}`)
+	ins("P7", "plan", "todo", "", `[1,2,3]`)
+	ins("P8", "plan", "todo", "", `{"plan":{"phases":{"id":"ph-1"}}}`)
+	ins("P9", "plan", "todo", "", `{"plan":{"phases":[{"id":5},{"id":""},{"name":"x"}]}}`)
 
 	body, err := os.ReadFile("postgres/043_plan_phases.sql")
 	require.NoError(t, err)
@@ -221,7 +248,13 @@ func TestMigration043PlanPhasesPostgres(t *testing.T) {
 		states[k] = st
 	}
 	require.NoError(t, rows.Err())
-	require.Equal(t, map[string]string{"P1/ph-1": "completed", "P1/ph-2": "started"}, states)
+	require.Equal(t, map[string]string{"P1/ph-1": "completed", "P1/ph-2": "started", "P5/ph-2": "pending"}, states)
+
+	var planRepairs int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM plan_phase_repairs WHERE task_id IN ('P1','P4','P5','P8','P9')`).Scan(&planRepairs))
+	require.Equal(t, 5, planRepairs)
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM plan_phase_repairs WHERE task_id IN ('P2','P6','P7')`).Scan(&planRepairs))
+	require.Equal(t, 0, planRepairs)
 
 	var name string
 	require.NoError(t, db.QueryRow(`SELECT name FROM plan_phases WHERE plan_id='P1' AND phase_id='ph-1'`).Scan(&name))
@@ -232,7 +265,7 @@ func TestMigration043PlanPhasesPostgres(t *testing.T) {
 	require.Equal(t, "ph-2", phase.String)
 	var repairs int
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM plan_phase_repairs`).Scan(&repairs))
-	require.Equal(t, 3, repairs, "C5, C6 and the child of a non-plan parent")
+	require.Equal(t, 8, repairs, "C5, C6, the child of a non-plan parent, and five malformed plans")
 	_, err = db.Exec(`UPDATE tasks SET status = 'review', title = 'renamed' WHERE id = 'C8'`)
 	require.NoError(t, err, "the triggers do not fire on unrelated updates to a flagged row")
 
@@ -248,6 +281,6 @@ func TestMigration043PlanPhasesPostgres(t *testing.T) {
 	require.NoError(t, db.QueryRow(`SELECT phase_id FROM tasks WHERE id='X1'`).Scan(&phase))
 	require.False(t, phase.Valid)
 	var n int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM plan_phases`).Scan(&n))
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM plan_phases WHERE plan_id = 'P1'`).Scan(&n))
 	require.Equal(t, 0, n)
 }

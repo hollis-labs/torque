@@ -37,11 +37,12 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS phase_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_tasks_parent_phase ON tasks(parent_id, phase_id) WHERE phase_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS plan_phase_repairs (
-    task_id    TEXT NOT NULL PRIMARY KEY,
+    task_id    TEXT NOT NULL,
     plan_id    TEXT,
     phase_id   TEXT NOT NULL,
     reason     TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')
+    created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS'),
+    PRIMARY KEY (task_id, reason)
 );
 
 INSERT INTO plan_phases (plan_id, phase_id, name, display_order, acceptance)
@@ -57,8 +58,30 @@ SELECT t.id,
              ELSE '[]'::jsonb END) AS p(value)
  WHERE t.kind = 'plan'
    AND jsonb_typeof(p.value) = 'object'
-   AND COALESCE(p.value ->> 'id', '') <> ''
+   AND jsonb_typeof(p.value -> 'id') = 'string'
+   AND p.value ->> 'id' <> ''
 ON CONFLICT (plan_id, phase_id) DO NOTHING;
+
+-- Plans the backfill could not read fully go to plan_phase_repairs.
+INSERT INTO plan_phase_repairs (task_id, plan_id, phase_id, reason)
+SELECT t.id, t.id, '', 'metadata.plan.phases is not an array'
+  FROM tasks t
+ WHERE t.kind = 'plan'
+   AND jsonb_typeof(torque_safe_jsonb(t.metadata) #> '{plan,phases}') NOT IN ('array', 'null')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO plan_phase_repairs (task_id, plan_id, phase_id, reason)
+SELECT t.id, t.id, '', 'a metadata.plan.phases entry is not an object with a text id and was skipped'
+  FROM tasks t
+  CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(torque_safe_jsonb(t.metadata) #> '{plan,phases}') = 'array'
+             THEN torque_safe_jsonb(t.metadata) #> '{plan,phases}'
+             ELSE '[]'::jsonb END) AS p(value)
+ WHERE t.kind = 'plan'
+   AND NOT COALESCE(jsonb_typeof(p.value) = 'object'
+                    AND jsonb_typeof(p.value -> 'id') = 'string'
+                    AND p.value ->> 'id' <> '', false)
+ON CONFLICT DO NOTHING;
 
 UPDATE tasks
    SET phase_id = torque_safe_jsonb(metadata) ->> 'phase_id'
@@ -75,7 +98,7 @@ SELECT id, parent_id, torque_safe_jsonb(metadata) ->> 'phase_id',
   FROM tasks
  WHERE phase_id IS NULL
    AND COALESCE(torque_safe_jsonb(metadata) ->> 'phase_id', '') <> ''
-ON CONFLICT (task_id) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 UPDATE plan_phases
    SET state = 'completed'
