@@ -105,7 +105,7 @@ export function PlanDiff({ plan }: { plan: AgentPlan }) {
           <div className="space-y-4">
             {sections.map((s) => (
               <div key={s}>
-                <div className="mb-1 font-mono text-[10px] uppercase tracking-widest text-zinc-600">{s}</div>
+                <div className="mb-1 font-mono text-[10px] uppercase tracking-widest text-zinc-500">{s}</div>
                 <ul className="space-y-1.5">{plan.changes.filter((c) => c.section === s).map((c) => <ChangeRow key={c.field} c={c} />)}</ul>
               </div>
             ))}

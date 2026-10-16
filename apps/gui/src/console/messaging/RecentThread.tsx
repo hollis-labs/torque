@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { LinkText } from '../autolink/LinkText'
 import { ago } from '@/lib/agent-activity'
 import { useMessaging } from './context'
 import { DeliveryBadge } from './DeliveryStatus'
@@ -39,7 +40,7 @@ export function RecentThread({ query, refreshKey = 0, operator }: { query: Threa
                   <span>{mine ? 'you' : 'them'}{m.intent !== 'message' ? ` · ${m.intent.replace('_', ' ')}` : ''} · {ago(m.at, now)}</span>
                   {mine && <DeliveryBadge state={m.state} />}
                 </div>
-                <p className="mt-1 whitespace-pre-wrap font-mono text-xs text-zinc-200">{m.body}</p>
+                <p className="mt-1 whitespace-pre-wrap font-mono text-xs text-zinc-200"><LinkText surface="messaging" text={m.body} /></p>
               </li>
             )
           })}

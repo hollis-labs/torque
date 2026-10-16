@@ -76,4 +76,10 @@ export interface MessagingClient {
   getDelivery(id: string): Promise<DeliveryState>
   /** Recent messages, oldest first. */
   recentThread(q: ThreadQuery): Promise<ThreadMessage[]>
+  /**
+   * Optional, non-destructive unread counts for many addresses in ONE call
+   * (the Agents tab badge). Absent on adapters with no safe backend yet: callers
+   * then keep whatever the feed reported. See BACKEND_NEEDS.md.
+   */
+  unreadCounts?(addresses: string[]): Promise<Record<string, number>>
 }

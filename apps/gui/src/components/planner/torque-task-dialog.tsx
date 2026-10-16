@@ -5,6 +5,7 @@ import { CopyableId, Dialog, DialogContent, DialogDescription, DialogHeader, Dia
 import { StatusBadge } from '@/components/domain/status-badge'
 import { useApi } from '@/hooks/use-api'
 import type { Comment, Task } from '@/lib/types'
+import { LinkText } from '@/console/autolink'
 
 const COMMENT_LIMIT = 5
 
@@ -69,7 +70,7 @@ export function TorqueTaskDialog({ id, onClose }: { id: string; onClose: () => v
               <DialogTitle className="text-lg">{task.title}</DialogTitle>
             </DialogHeader>
             {task.description ? (
-              <p className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-sm">{task.description}</p>
+              <p className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-sm"><LinkText surface="task-description" text={task.description} /></p>
             ) : (
               <p className="text-sm text-muted-foreground">No description.</p>
             )}
@@ -83,7 +84,7 @@ export function TorqueTaskDialog({ id, onClose }: { id: string; onClose: () => v
                         <span className="font-medium text-foreground">{c.author || 'unknown'}</span>
                         <span>{when(c.created_at)}</span>
                       </div>
-                      <p className="line-clamp-6 whitespace-pre-wrap break-words">{c.content}</p>
+                      <p className="line-clamp-6 whitespace-pre-wrap break-words"><LinkText surface="task-comments" text={c.content} /></p>
                     </li>
                   ))}
                 </ul>

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Crown, Zap } from 'lucide-react'
 import { EmptyState } from '@hollis-labs/sysop-ui'
 import { MailBadge, ModelTag, Score, Stat } from '@/components/planner/fleet-parts'
@@ -7,7 +8,7 @@ import { FleetAgentModal } from '@/components/planner/fleet-agent-modal'
 import { FLEET_STATE_STYLE } from '@/components/planner/fleet-style'
 import { StateTimeline } from '@/components/planner/fleet-timeline'
 import { useFleetAgents } from '@/hooks/use-fleet-agents'
-import { busySeries, whatNow, cwdName, cwdTail, fleetCounts, formatDuration, groupFleet, timelineWindow, workingShare, type FleetAgent, type FleetHistory } from '@/lib/fleet-agents'
+import { matchFocusedAgent, busySeries, whatNow, cwdName, cwdTail, fleetCounts, formatDuration, groupFleet, timelineWindow, workingShare, type FleetAgent, type FleetHistory } from '@/lib/fleet-agents'
 
 function Row({ agent, rank, score, leader, entries, now, onOpen }: { agent: FleetAgent; rank: number; score: number; leader: boolean; entries: FleetHistory[string]; now: number; onOpen: () => void }) {
   const s = FLEET_STATE_STYLE[agent.state]
@@ -53,7 +54,7 @@ function Row({ agent, rank, score, leader, entries, now, onOpen }: { agent: Flee
           <ActivityBars series={busySeries(entries, now, windowMs)} state={s.avatar} scaleMax={100} height={22} />
           <StateTimeline entries={entries} now={now} windowMs={windowMs} height={6} />
         </span>
-        <MailBadge count={agent.messages} />
+        <MailBadge count={agent.messages} agent={agent} />
         <span className="w-20 shrink-0 text-right">
           <span className="block text-sm text-amber-200">
             <Score value={score} />
@@ -68,11 +69,29 @@ function Row({ agent, rank, score, leader, entries, now, onOpen }: { agent: Flee
 /** Owns the live feed, so the stream and polling exist only while this tab is open. */
 export function FleetAgentsPanel() {
   const fleet = useFleetAgents()
-  return <FleetAgentsView agents={fleet.agents} history={fleet.history} error={fleet.error} now={fleet.now} live={fleet.live} />
+  // `?agent=<id | provider | folder name>` (agent chips deep-link here) opens that agent's modal.
+  const [search, setSearch] = useSearchParams()
+  const focus = search.get('agent')
+  const clearFocus = () => {
+    const next = new URLSearchParams(search)
+    next.delete('agent')
+    setSearch(next, { replace: true })
+  }
+  return <FleetAgentsView agents={fleet.agents} history={fleet.history} error={fleet.error} now={fleet.now} live={fleet.live} focus={focus} onFocusClose={clearFocus} />
 }
 
-export function FleetAgentsView({ agents, history, error, now, live }: { agents: FleetAgent[] | null; history: FleetHistory; error: string | null; now: number; live: boolean }) {
+export function FleetAgentsView({ agents, history, error, now, live, focus, onFocusClose }: { agents: FleetAgent[] | null; history: FleetHistory; error: string | null; now: number; live: boolean; focus?: string | null; onFocusClose?: () => void }) {
   const [openId, setOpenId] = useState<string | null>(null)
+  const [focusClosed, setFocusClosed] = useState<string | null>(null)
+  const focusId = focus && focus !== focusClosed && agents ? (matchFocusedAgent(agents, focus)?.id ?? null) : null
+  const shownId = openId ?? focusId
+  const closeModal = () => {
+    setOpenId(null)
+    if (focusId) {
+      setFocusClosed(focus ?? null)
+      onFocusClose?.()
+    }
+  }
   const groups = groupFleet(agents ?? [], history, now)
   const ref = useFlip(groups.map((g) => `${g.name}:${g.agents.map((a) => a.agent.id).join(',')}`).join('|'))
   if (agents === null) {
@@ -84,7 +103,7 @@ export function FleetAgentsView({ agents, history, error, now, live }: { agents:
   }
   const c = fleetCounts(agents)
   const leaderId = groups.flatMap((g) => g.agents).reduce<{ id: string | null; score: number }>((best, a) => (a.score > best.score && a.agent.state !== 'unknown' ? { id: a.agent.id, score: a.score } : best), { id: null, score: -1 }).id
-  const open = groups.flatMap((g) => g.agents).find((a) => a.agent.id === openId) ?? null
+  const open = groups.flatMap((g) => g.agents).find((a) => a.agent.id === shownId) ?? null
   return (
     <div ref={ref} className="agent-arcade">
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
@@ -116,7 +135,7 @@ export function FleetAgentsView({ agents, history, error, now, live }: { agents:
           </ul>
         </section>
       ))}
-      {open && <FleetAgentModal agent={open.agent} score={open.score} rank={open.rank} entries={history[open.agent.id] ?? []} now={now} onClose={() => setOpenId(null)} />}
+      {open && <FleetAgentModal agent={open.agent} score={open.score} rank={open.rank} entries={history[open.agent.id] ?? []} now={now} onClose={closeModal} />}
     </div>
   )
 }

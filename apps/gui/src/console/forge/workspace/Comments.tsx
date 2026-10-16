@@ -26,7 +26,7 @@ export function CommentItem({ c, posting, onReply }: { c: ForgeComment; posting?
     <article className={`px-3 py-2 ${posting ? 'opacity-60' : ''}`} data-testid="forge-comment" aria-busy={posting || undefined}>
       <header className="flex flex-wrap items-center gap-2">
         <Author user={c.author} />
-        <span className="font-mono text-[10px] text-zinc-600">{posting ? 'posting…' : ago(Date.parse(c.createdAt), now)}</span>
+        <span className="font-mono text-[10px] text-zinc-500">{posting ? 'posting…' : ago(Date.parse(c.createdAt), now)}</span>
         {onReply && !posting && (
           <button type="button" onClick={onReply} className="ml-auto font-mono text-[10px] uppercase tracking-wider text-zinc-500 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300">
             Reply
@@ -81,11 +81,11 @@ export function Composer({ placeholder, submitLabel, secondary, onSubmit, onCanc
         placeholder={placeholder}
         aria-label={placeholder}
         disabled={busy || disabled}
-        className="w-full resize-y border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-sans text-[13px] text-zinc-100 placeholder:text-zinc-600 focus-visible:border-amber-300 focus-visible:outline-none disabled:opacity-60"
+        className="w-full resize-y border border-zinc-700 bg-zinc-950 px-2 py-1.5 font-sans text-[13px] text-zinc-100 placeholder:text-zinc-500 focus-visible:border-amber-300 focus-visible:outline-none disabled:opacity-60"
       />
       {error && <p className="text-[12px] text-red-300" role="alert">{error}. Your draft is kept; try again.</p>}
       <div className="flex items-center gap-2">
-        <span className="mr-auto font-mono text-[10px] text-zinc-600">Ctrl+Enter to post</span>
+        <span className="mr-auto font-mono text-[10px] text-zinc-500">Ctrl+Enter to post</span>
         {onCancel && <Btn onClick={onCancel} disabled={busy}>Cancel</Btn>}
         {secondary && <Btn onClick={() => { if (!empty) { secondary.run(body); setBody('') } }} disabled={empty || busy || disabled}>{secondary.label}</Btn>}
         <Btn tone="primary" onClick={() => void submit()} disabled={empty || busy || disabled}>{busy ? 'Posting…' : submitLabel}</Btn>

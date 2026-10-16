@@ -34,7 +34,7 @@ export function createAgentKind(): RefKind {
       return hits
     },
     chipLabel: (ref) => `@${ref.canonical}`,
-    // The Agents tab is /planner/agents. It has no deep link to one agent yet (see autolink/BACKEND_NEEDS.md).
-    open: () => ({ type: 'route', to: '/planner/agents' }),
+    // The Agents tab reads `?agent=` and opens that agent (id, provider or folder name).
+    open: (ref) => ({ type: 'route', to: `/planner/agents?agent=${encodeURIComponent(ref.canonical)}` }),
   }
 }

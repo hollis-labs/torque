@@ -23,6 +23,7 @@ export interface MockMessagingClient extends MessagingClient {
   /** Test/demo hook: simulate the recipient replying. */
   markReplied(id: string): void
   sent(): ThreadMessage[]
+  unreadCounts(addresses: string[]): Promise<Record<string, number>>
 }
 
 export function createMockMessagingClient(opts: MockMessagingOptions = {}): MockMessagingClient {
@@ -48,7 +49,9 @@ export function createMockMessagingClient(opts: MockMessagingOptions = {}): Mock
       const hit = MOCK_RECIPIENTS.find((x) => x.address === r || x.agentId === r)
       if (hit) return hit
       const p = parseUrn(r)
-      return p && p.kind === 'agent' ? { address: r, label: p.id, kind: 'agent', agentId: p.id } : null
+      if (p) return p.kind === 'agent' ? { address: r, label: p.id, kind: 'agent', agentId: p.id } : null
+      // Fixture feeds name agents by bare slug (`agent-alpha`); the mock registry accepts any well-formed slug.
+      return /^[A-Za-z][A-Za-z0-9_.-]{1,60}$/.test(r) ? { address: `msg://agent/local/${r}`, label: r, kind: 'agent', agentId: r } : null
     },
     async send(req: SendRequest): Promise<SentMessage> {
       const id = `mock-msg-${++seq}`
@@ -68,6 +71,11 @@ export function createMockMessagingClient(opts: MockMessagingOptions = {}): Mock
         .sort((a, b) => a.at - b.at)
         .map((m) => ({ ...m, state: stateOf(m) }))
       return out.slice(-(q.limit ?? 5))
+    },
+    async unreadCounts(addresses) {
+      const out: Record<string, number> = {}
+      for (const a of addresses) out[a] = msgs.filter((m) => m.to === a && ['queued', 'delivered'].includes(stateOf(m))).length
+      return out
     },
     markReplied: (id) => void replied.add(id),
     sent: () => msgs.map((m) => ({ ...m, state: stateOf(m) })),

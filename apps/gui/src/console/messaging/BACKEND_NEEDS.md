@@ -39,6 +39,16 @@ for it to be correct and complete.
    recipient agent should be told about `expected_response` (render it in the inbox projection).
 8. **Idempotency.** A retry after a timeout can double-send. Accept a client `Idempotency-Key`
    (the GUI can supply `console-<uuid>`).
+9. **Unread counts (Q1).** The Agents tab MailBadge falls back to `MessagingClient.unreadCounts(addresses)`
+   when the fleet feed has no `unread_messages`. `GET /messages/inbox` is destructive (marks delivered),
+   so the live adapter does not implement it and the badge stays "not reported". Need a non-destructive
+   batch read, e.g. `GET /messages/unread?to=<urn>&to=<urn>` returning `{ "<urn>": n }`. The GUI polls it
+   once per 30s for all visible agents, only while the Agents tab is open and the Console is enabled. The
+   address it asks for is `msg://agent/<provider>/<fleet agent id>`; confirm this matches registered URNs.
+10. **Bare-slug recipients (Q1).** Alert reply resolves the event's sender (`agent-alpha`, a fleet slug) via
+    `resolveRecipient`. The mock accepts any slug; the mail adapter only accepts full `msg://` URNs, so in
+    `?console=live` an A2 reply to a slug-only sender says "No messageable sender". Need an agent-registry
+    lookup (slug -> URN), the same one item 4 asks for.
 
 ## Open questions
 

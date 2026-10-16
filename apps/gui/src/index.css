@@ -10,4 +10,7 @@
 .agent-pulse-bar { animation: agent-pulse 1s steps(2) infinite }
 @media (prefers-reduced-motion: reduce) {
   .agent-blink, .agent-bob, .agent-pulse-bar { animation: none }
+  /* Console (loading skeletons, streaming cursor, spinners): no pulsing; spinners slow to a calm rotation. */
+  .animate-pulse { animation: none }
+  .animate-spin { animation-duration: 3s }
 }

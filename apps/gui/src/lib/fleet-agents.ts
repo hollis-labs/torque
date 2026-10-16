@@ -318,3 +318,11 @@ export function whatNow(agent: FleetAgent, now: number): string {
   if (agent.lastAction) return `${agent.lastAction.text} · ${ago(agent.lastAction.at ?? agent.lastActivity ?? now, now)}`
   return agent.lastActivity ? `Active ${ago(agent.lastActivity, now)}` : 'No activity data'
 }
+
+/** The agent a `?agent=` value names: exact id first, then provider, then working-folder name; first match wins. */
+export function matchFocusedAgent(agents: FleetAgent[], focus: string): FleetAgent | null {
+  const f = focus.trim().toLowerCase()
+  if (!f) return null
+  const by = (pick: (a: FleetAgent) => string) => agents.find((a) => pick(a).toLowerCase() === f) ?? null
+  return by((a) => a.id) ?? by((a) => a.provider) ?? by((a) => cwdName(a.cwd))
+}

@@ -3,6 +3,7 @@ import { Send } from 'lucide-react'
 import { Card, CardContent, CardHeader, Textarea, Button, Skeleton } from '@hollis-labs/sysop-ui'
 import { formatRelativeTime } from '@/lib/utils'
 import type { Comment } from '@/lib/types'
+import { LinkText } from '@/console/autolink'
 
 interface CommentListProps {
   comments: Comment[]
@@ -49,7 +50,7 @@ export function CommentList({ comments, loading, onAddComment }: CommentListProp
               </div>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-foreground whitespace-pre-wrap">{comment.content}</p>
+              <p className="text-sm text-foreground whitespace-pre-wrap"><LinkText surface="task-comments" text={comment.content} /></p>
             </CardContent>
           </Card>
         ))

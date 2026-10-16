@@ -34,7 +34,7 @@ export function StatTile({ label, value, unit, previous, invert, series, loading
         <span className={`font-mono text-[11px] ${TONE[tone].text}`}>
           <span aria-hidden>{arrow} </span>
           <span className="sr-only">{d!.abs > 0 ? 'up' : d!.abs < 0 ? 'down' : 'unchanged'} </span>
-          {dText} <span className="text-zinc-600">vs prev</span>
+          {dText} <span className="text-zinc-500">vs prev</span>
         </span>
       )}
     </div>

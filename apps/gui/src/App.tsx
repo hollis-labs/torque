@@ -1,8 +1,10 @@
+import type { ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
-import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban, MessagesSquare, Compass, Tags } from 'lucide-react'
+import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban, MessagesSquare, Compass, Tags, GitPullRequest } from 'lucide-react'
 import { NavRail, TooltipProvider, Toaster, type NavRailItem } from '@hollis-labs/sysop-ui'
 import { ApiProvider } from '@/hooks/use-api'
-import { ConsoleShell, AlertTrayTrigger } from '@/console'
+import { ConsoleShell, AlertTrayTrigger, ConsoleNavExtras, useConsoleEnabled } from '@/console'
+import { PendingPrInbox, PR_INBOX_PATH } from '@/console/forge/inbox'
 import { ShellAutolink } from '@/console/autolink'
 import { PrWorkspacePage, PR_WORKSPACE_ROUTE } from '@/console/forge/workspace'
 import { ActiveRunsProvider } from '@/hooks/use-active-runs'
@@ -49,11 +51,20 @@ const NAV_DESTINATIONS = [
   { key: 'settings', to: '/settings', label: 'Settings', icon: <Settings className="h-4 w-4" />, footer: true },
 ] as const
 
+// Console-only destinations: shown, and routed, only when ?console= / VITE_CONSOLE_SOURCE enables the Console.
+const CONSOLE_DESTINATIONS = [
+  { key: 'pr-inbox', to: PR_INBOX_PATH, label: 'PR inbox', icon: <GitPullRequest className="h-4 w-4" /> },
+] as const
+
 function AppShell() {
   const navigate = useNavigate()
   const location = useLocation()
+  const consoleOn = useConsoleEnabled()
+  const destinations: readonly { key: string; to: string; label: string; icon: ReactNode; footer?: boolean }[] = consoleOn
+    ? [...NAV_DESTINATIONS.filter((d) => !('footer' in d)), ...CONSOLE_DESTINATIONS, ...NAV_DESTINATIONS.filter((d) => 'footer' in d)]
+    : NAV_DESTINATIONS
 
-  const navItems: NavRailItem[] = NAV_DESTINATIONS.map((dest) => ({
+  const navItems: NavRailItem[] = destinations.map((dest) => ({
     key: dest.key,
     label: dest.label,
     icon: dest.icon,
@@ -67,7 +78,7 @@ function AppShell() {
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-bg text-foreground">
-      <NavRail items={navItems} logo={<Cog className="h-5 w-5" />} logoLabel="Torque" footerExtra={<AlertTrayTrigger />} />
+      <NavRail items={navItems} logo={<Cog className="h-5 w-5" />} logoLabel="Torque" footerExtra={<ConsoleNavExtras alerts={<AlertTrayTrigger />} />} />
 
       {/* Main content */}
       <main className="min-w-0 flex-1 overflow-auto bg-bg">
@@ -104,6 +115,7 @@ function AppShell() {
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path={PR_WORKSPACE_ROUTE} element={<PrWorkspacePage />} />
+          {consoleOn && <Route path={PR_INBOX_PATH} element={<PendingPrInbox />} />}
         </Routes>
       </main>
     </div>

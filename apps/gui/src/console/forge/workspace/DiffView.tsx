@@ -151,7 +151,7 @@ export function FileDiffView(props: FileDiffViewProps) {
 
   const lineCell = (line: DiffLine, which: 'old' | 'new') => {
     const n = which === 'old' ? line.oldLine : line.newLine
-    return <span className="select-none px-2 text-right text-zinc-600">{n ?? ''}</span>
+    return <span className="select-none px-2 text-right text-zinc-500">{n ?? ''}</span>
   }
 
   const body = (() => {
@@ -269,7 +269,7 @@ function SplitCell({ line, side, lang, gutter }: { line?: DiffLine; side: 'old' 
   return (
     <div className={`group/row relative grid grid-cols-[3rem_1.25rem_minmax(0,1fr)] ${LINE_BG[line.kind]}`}>
       {gutter}
-      <span className="select-none px-2 text-right text-zinc-600">{n ?? ''}</span>
+      <span className="select-none px-2 text-right text-zinc-500">{n ?? ''}</span>
       <span className={`select-none text-center ${MARK_COLOR[line.kind]}`}>{LINE_MARK[line.kind]}</span>
       <span className="whitespace-pre-wrap pr-3 text-zinc-200 [overflow-wrap:anywhere]"><Code text={line.text} lang={lang} /></span>
     </div>
@@ -280,7 +280,7 @@ function ThreadPostingNote({ c }: { c: ForgeComment }) {
   return (
     <div className="px-3 py-2 opacity-60" aria-busy>
       <span className="font-mono text-[12px] text-zinc-200">@{c.author.login}</span>
-      <span className="ml-2 font-mono text-[10px] text-zinc-600">posting…</span>
+      <span className="ml-2 font-mono text-[10px] text-zinc-500">posting…</span>
       <p className="mt-1 whitespace-pre-wrap text-[13px] text-zinc-300">{c.body}</p>
     </div>
   )

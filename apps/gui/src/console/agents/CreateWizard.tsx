@@ -138,7 +138,7 @@ export function CreateWizard({ agents, cloneOf, onClose, onCreated }: CreateWiza
         <h2 className="font-mono text-sm font-semibold uppercase tracking-wide">New agent</h2>
         <ol aria-label="Steps" className="flex flex-wrap items-center gap-x-3 font-mono text-[10px] uppercase tracking-widest">
           {STEPS.map((s, n) => (
-            <li key={s.id} aria-current={s.id === step ? 'step' : undefined} className={s.id === step ? 'text-amber-300' : n < at ? 'text-zinc-300' : 'text-zinc-600'}>{n + 1}. {s.label}</li>
+            <li key={s.id} aria-current={s.id === step ? 'step' : undefined} className={s.id === step ? 'text-amber-300' : n < at ? 'text-zinc-300' : 'text-zinc-500'}>{n + 1}. {s.label}</li>
           ))}
         </ol>
         <span className="ml-auto flex items-center gap-2">{step !== 'source' && <RiskBadge risk={live.risk} />}<Btn onClick={onClose}>Cancel</Btn></span>

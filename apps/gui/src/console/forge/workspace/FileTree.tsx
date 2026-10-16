@@ -71,7 +71,7 @@ export function FileTree({ files, active, threads, onSelect }: FileTreeProps) {
           onChange={(e) => setFilter(e.target.value)}
           placeholder={`Filter ${files.length} files…`}
           aria-label="Filter files"
-          className="h-7 w-full border border-zinc-800 bg-zinc-950 px-2 font-mono text-[11px] text-zinc-200 placeholder:text-zinc-600 focus-visible:border-amber-300 focus-visible:outline-none"
+          className="h-7 w-full border border-zinc-800 bg-zinc-950 px-2 font-mono text-[11px] text-zinc-200 placeholder:text-zinc-500 focus-visible:border-amber-300 focus-visible:outline-none"
         />
       </div>
       <ul className="min-h-0 flex-1 overflow-auto py-1">{tree.length ? render(tree, 0) : <li className="px-3 py-2 text-[12px] text-zinc-500">No matching files.</li>}</ul>

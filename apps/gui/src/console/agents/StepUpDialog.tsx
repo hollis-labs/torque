@@ -41,7 +41,7 @@ function MockStepUp({ identity }: { identity: MockIdentityConfirm }) {
           </div>
         </dl>
         <div className="flex items-center gap-2 border-t border-zinc-800 px-5 py-3">
-          <span className="mr-auto font-mono text-[10px] uppercase tracking-widest text-zinc-600">mock step-up</span>
+          <span className="mr-auto font-mono text-[10px] uppercase tracking-widest text-zinc-500">mock step-up</span>
           <Btn autoFocus onClick={() => identity.resolve(head.id, 'cancelled', 'cancelled by user')}>Cancel</Btn>
           <Btn tone="primary" onClick={() => identity.resolve(head.id, 'granted')}>Confirm</Btn>
         </div>

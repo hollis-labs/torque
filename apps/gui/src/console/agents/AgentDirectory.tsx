@@ -85,7 +85,7 @@ function Fact({ k, v }: { k: string; v?: ReactNode }) {
   return (
     <div className="flex gap-3 py-0.5 text-[13px]">
       <dt className="w-28 shrink-0 font-mono text-[11px] uppercase tracking-wider text-zinc-500">{k}</dt>
-      <dd className="min-w-0 break-words text-zinc-200">{v ?? <span className="text-zinc-600">not reported</span>}</dd>
+      <dd className="min-w-0 break-words text-zinc-200">{v ?? <span className="text-zinc-500">not reported</span>}</dd>
     </div>
   )
 }
@@ -244,7 +244,7 @@ function AgentDirectoryInner({ now: nowProp }: { now?: number } = {}) {
         <span className={live ? 'text-emerald-300' : ''}>{live} running</span>
         <span>{agents.filter((a) => !a.identity.enabled && !a.identity.retired).length} disabled</span>
         <span>{agents.filter((a) => a.identity.retired).length} retired</span>
-        <span className="ml-auto text-zinc-600">sample data · changes need confirmation</span>
+        <span className="ml-auto text-zinc-500">sample data · changes need confirmation</span>
       </div>
       <div role="tablist" aria-label="Agent manager" className="flex items-center gap-1 border-b border-zinc-800/80 px-4 py-1.5">
         {(['agents', 'teams', 'assignments'] as const).map((sec) => (

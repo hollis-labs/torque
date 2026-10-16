@@ -3,6 +3,7 @@ import { BellOff, X } from 'lucide-react'
 import { SEVERITY_ORDER } from '../events/types'
 import { useAlertsController } from './context'
 import { ConsolePrefsPanel } from '../prefs/ConsolePrefsPanel'
+import { useRestoreFocus } from '../shell/restore-focus'
 import { AlertListItem } from './AlertListItem'
 import { SEVERITY_STYLE } from './severity-style'
 import type { AlertSeverity } from './types'
@@ -17,6 +18,7 @@ export function AlertTray() {
   const [tab, setTab] = useState<'active' | 'history'>('active')
   const [prefsOpen, setPrefsOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  useRestoreFocus(c.open, '[data-alert-trigger]')
 
   useEffect(() => {
     if (!c.open) return
@@ -24,7 +26,8 @@ export function AlertTray() {
     el?.focus()
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node
-      if (el && !el.contains(t) && !(t as Element).closest?.('[data-alert-trigger]')) c.setOpen(false)
+      // Clicks in the trigger or in a modal stacked above the tray (alert detail) are not "outside".
+      if (el && !el.contains(t) && !(t as Element).closest?.('[data-alert-trigger], [data-overlay]')) c.setOpen(false)
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
