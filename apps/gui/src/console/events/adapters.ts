@@ -78,6 +78,10 @@ export class TorqueEventsSource implements ConsoleSource {
   subscribe(h: SubscribeHandlers): () => void {
     return this.api.subscribeEvents(
       (ev) => {
+        // The server sends a gap frame when it cannot replay from the client's
+        // Last-Event-ID (pruned, other generation, cursor ahead). It is a stream
+        // signal, not a domain event.
+        if (ev.type === 'gap') return h.onGap(parseGapInfo(ev.data))
         const d = ev.data ?? {}
         const subjId = typeof d.id === 'string' ? d.id : typeof d.task_id === 'string' ? d.task_id : ''
         const e = parseConsoleEvent({

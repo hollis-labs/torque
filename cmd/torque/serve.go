@@ -495,8 +495,33 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// SSE bridge: scheduler.EventBus → httpserver.SSEHub
 	bridge := httpserver.NewSchedulerBridge(handler.SSEHub(), sched.EventBus())
 
+	// Durable state events on /events: ids, replay from Last-Event-ID, gap
+	// frames. Off on Postgres until its outbox cursor is commit-ordered.
+	outboxOn := store.OutboxSupported()
+	if outboxOn {
+		if minted, err := store.OutboxMintGeneration(ctx); err != nil {
+			log.Printf("[serve] outbox generation: %v", err)
+		} else if minted {
+			log.Printf("[serve] outbox: minted a fresh generation for a new event log")
+		}
+		handler.SSEHub().EnableOutbox(store)
+	} else {
+		log.Printf("[serve] outbox reader disabled: the %s store does not allocate event_outbox seq in commit order (events are still written)", driver)
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(4)
+	if outboxOn {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			handler.SSEHub().RunOutbox(runCtx, store.OutboxWake())
+		}()
+		go func() {
+			defer wg.Done()
+			runOutboxJanitor(runCtx, store)
+		}()
+	}
 	go func() {
 		defer wg.Done()
 		bridge.Run(runCtx)
@@ -542,7 +567,7 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// from other Hollis apps (Nanite / Tether / Hadron / Torque-MCP clients)
 	// continue the same trace. Sits outside the chi router's CORS step so
 	// preflights are also visible.
-	srv := &http.Server{Handler: propagation.HTTPMiddleware(handler)}
+	srv := &http.Server{Handler: httpserver.KeepRawWriter(propagation.HTTPMiddleware(handler))}
 
 	// Graceful HTTP shutdown is driven by runCtx, which fires when either the
 	// parent ctx is cancelled (normal SIGINT/SIGTERM path) OR when we call

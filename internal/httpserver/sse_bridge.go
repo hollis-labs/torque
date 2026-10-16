@@ -55,6 +55,12 @@ func (b *SchedulerBridge) Run(ctx context.Context) {
 				// Bus closed — channel has been closed by EventBus.Close().
 				return
 			}
+			// task.transitioned is served from the durable outbox, once, with
+			// an id. The bus still carries it for in-process subscribers (the
+			// session lifecycle hook); forwarding it here would duplicate it.
+			if evt.Type == "task.transitioned" {
+				continue
+			}
 			b.hub.Broadcast(evt.Type, map[string]interface{}{
 				"task_id": evt.TaskID,
 				"run_id":  evt.RunID,

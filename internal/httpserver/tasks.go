@@ -1327,7 +1327,8 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.sse.Broadcast("task.transitioned", map[string]interface{}{"task_id": id, "status": req.Status})
+	// task.transitioned reaches /events from the outbox (sse_outbox.go), in the
+	// same transaction as the change, for every path and not just this route.
 	writeJSON(w, http.StatusOK, taskJSON(task, tags, deps, agg, subs, s.collectionNameForTask(task)))
 }
 
@@ -1343,14 +1344,9 @@ func (s *Server) bulkTransitionTasks(w http.ResponseWriter, r *http.Request) {
 
 	ctx := httpTrigger(r, "POST /tasks/bulk-transition").Context()
 	succeeded, _ := s.svc.Task.BulkTransition(ctx, req.IDs, req.Status)
-	// Broadcast only the IDs that actually transitioned. The prior code
-	// took req.IDs[:n], which on partial failure broadcast the WRONG ids
-	// (the first n input ids, regardless of which actually succeeded) —
-	// Copilot review on PR #104 found this; BulkTransition's signature
-	// changed at the same time to return succeeded IDs.
-	for _, id := range succeeded {
-		s.sse.Broadcast("task.transitioned", map[string]interface{}{"task_id": id, "status": req.Status})
-	}
+	// No broadcast here: each transition wrote its own outbox event, which
+	// /events serves (sse_outbox.go). Only the ids that actually transitioned
+	// have one.
 	writeJSON(w, http.StatusOK, map[string]int{"updated": len(succeeded)})
 }
 

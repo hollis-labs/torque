@@ -25,9 +25,48 @@ Main route groups:
 - `/features`
 - `/forums` for the feature-gated Tether Forums proxy
 - `/admin`
-- `/events` for SSE
+- `/events` for SSE (see below)
 
 The same `serve` process also serves the GUI SPA.
+
+### `/events`
+
+Task state changes arrive on `/events` from a transactional outbox
+(`event_outbox`, migration 042): the event is written in the same transaction
+as the status change, whichever path made it (HTTP, MCP, scheduler, checkpoint
+park). Those frames carry an SSE `id` of `<generation>:<seq>`. Reconnect with
+`Last-Event-ID` (or `?since=`) to be replayed what you missed; with no id you
+get live events only. If the log cannot honour the id (a pruned prefix, another
+generation, a cursor ahead of the head, a malformed id) you get one `gap` frame
+with `reason`, `earliest_available` and `high_water`. After a `pruned` gap the
+events that remain follow; after `bad_cursor`, `generation_changed` and
+`cursor_ahead` the stream continues live from the head. The gap frame carries an
+`id` (where the stream resumes), so a reconnect does not repeat it. If the log
+is trimmed past a connected client's position, the client gets a `pruned` gap
+mid-stream. Delivery is at-least-once: dedupe on `envelope.id`.
+
+A task transition is one frame. Its top level keeps the shape older clients
+read (`type: "task.transitioned"`, `data.task_id`, `data.status`, plus
+`from`/`to`), and `envelope` carries the full `task.state_changed` event. A
+non-forced transition to the status the task already has writes no event. The event's
+`trigger.kind` comes from the surface, not from identity: every MCP call is
+`agent`, an HTTP request is `human` only when it carries `X-Client: browser`
+(the GUI sends it on every request), and anything else over HTTP is `agent`.
+Who the caller is goes only in the event's `actor` block. The
+other frames on the stream (CRUD pings, scheduler run events) are best effort
+and carry no id. The reader is SQLite-only for now: on Postgres `/events` carries no task
+transitions (the events are still written).
+
+**Restoring a database.** The `<generation>` in an event id is the log's
+restart counter. A fresh log gets a random one at startup. When you restore
+`main.db` from a backup (or otherwise rewind the log), bump it by hand so
+clients holding ids from the later, lost history get a `generation_changed`
+gap instead of a wrong replay:
+
+```sql
+UPDATE event_outbox_meta SET generation = generation + 1 WHERE id = 1;
+```
+
 
 Forums uses the backend-held Tether operator credential and the
 [Tether Forums contract](https://github.com/hollis-labs/tether/blob/feat/forums-hierarchy/docs/forums.md).
