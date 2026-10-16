@@ -231,7 +231,7 @@ func TestGuardJWT_VerifiedTokenAdmittedUnderLegacyTokenAndEnforce(t *testing.T) 
 			"exp": time.Now().Add(time.Minute).Unix(), "jti": "j1"})
 		return in + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(priv, []byte(in)))
 	}
-	for _, mode := range []auth.Mode{auth.ModeOff, auth.ModeEnforce} {
+	for _, mode := range []auth.Mode{auth.ModeOff, auth.ModePermissive, auth.ModeEnforce} {
 		g, err := httpserver.NewGuard(context.Background(), httpserver.AuthConfig{
 			Mode: mode, Issuer: "https://tether.test", BootstrapKeyFile: keyFile, StaticToken: "s3cret"})
 		require.NoError(t, err)
@@ -239,7 +239,7 @@ func TestGuardJWT_VerifiedTokenAdmittedUnderLegacyTokenAndEnforce(t *testing.T) 
 		bearer := func(tok string) map[string]string { return map[string]string{"Authorization": "Bearer " + tok} }
 		assert.Equal(t, http.StatusOK, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(mint("torque", "torque.read"))).StatusCode, mode)
 		assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(mint("tesseract", "torque.read"))).StatusCode, mode)
-		if mode == auth.ModeOff {
+		if mode != auth.ModeEnforce {
 			// Under-scoped JWT must not bypass the legacy token gate.
 			assert.Equal(t, http.StatusUnauthorized, do(t, "POST", ts.URL+"/api/v1/tasks", bearer(mint("torque", "torque.read"))).StatusCode)
 		}
