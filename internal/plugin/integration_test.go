@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	goplugin "github.com/hollis-labs/plugin"
+	goplugin "github.com/hollis-labs/libs/mcp/plugin-mcp/plugin-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -42,7 +42,7 @@ func (p *integrationPlugin) Load(host goplugin.Host) error {
 	}
 
 	// Register an event hook.
-	if err := host.RegisterEventHook([]string{pluginpkg.EventTaskCreated}, &integrationEventHook{}); err != nil {
+	if err := host.RegisterEventHook([]string{pluginpkg.EventTaskCreated}, &integrationEventHook{pluginID: p.id}); err != nil {
 		return err
 	}
 
@@ -96,9 +96,11 @@ func (h *integrationCRUDHandler) List(_ context.Context, _ map[string]interface{
 // ---- integrationEventHook ----
 
 type integrationEventHook struct {
+	pluginID string
 	received []goplugin.Event
 }
 
+func (h *integrationEventHook) PluginID() string     { return h.pluginID }
 func (h *integrationEventHook) EventTypes() []string { return []string{pluginpkg.EventTaskCreated} }
 func (h *integrationEventHook) Handle(_ context.Context, event goplugin.Event) error {
 	h.received = append(h.received, event)

@@ -7,16 +7,16 @@ import (
 	"sort"
 	"sync"
 
-	goplugin "github.com/hollis-labs/plugin"
+	goplugin "github.com/hollis-labs/libs/mcp/plugin-mcp/plugin-sdk"
 )
 
 // Compile-time check: TorqueHost must satisfy goplugin.Host.
 var _ goplugin.Host = (*TorqueHost)(nil)
 
 // TorqueHost is the Torque-specific Host implementation.
-// It wraps the SDK Registry and adds Torque-domain capabilities.
+// It wraps the local Registry and adds Torque-domain capabilities.
 type TorqueHost struct {
-	inner           *goplugin.Registry
+	inner           *Registry
 	mu              sync.RWMutex
 	mux             *http.ServeMux
 	plugins         map[string]goplugin.Plugin
@@ -39,7 +39,7 @@ func NewTorqueHost(mux *http.ServeMux, log goplugin.Logger) *TorqueHost {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &TorqueHost{
-		inner:           goplugin.NewRegistry(log),
+		inner:           NewRegistry(log),
 		mux:             mux,
 		plugins:         make(map[string]goplugin.Plugin),
 		executors:       make(map[string]Executor),

@@ -14,7 +14,6 @@ require (
 	github.com/hollis-labs/libs/mesh/core v0.4.0
 	github.com/hollis-labs/libs/security/auth v0.1.0
 	github.com/hollis-labs/libs/security/policy v0.1.0
-	github.com/hollis-labs/plugin v0.0.0-20260410030617-741878c627b2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/oklog/ulid/v2 v2.1.2

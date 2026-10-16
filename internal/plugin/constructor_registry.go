@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	goplugin "github.com/hollis-labs/plugin"
+	goplugin "github.com/hollis-labs/libs/mcp/plugin-mcp/plugin-sdk"
 )
 
 // PluginConstructor is a zero-argument factory function that creates a Plugin instance.

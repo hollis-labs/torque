@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	goplugin "github.com/hollis-labs/plugin"
+	goplugin "github.com/hollis-labs/libs/mcp/plugin-mcp/plugin-sdk"
 )
 
 // wireCRUDRoutes registers HTTP routes for a CRUD handler on the given mux.

@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	goplugin "github.com/hollis-labs/plugin"
+	goplugin "github.com/hollis-labs/libs/mcp/plugin-mcp/plugin-sdk"
 
 	pluginpkg "github.com/hollis-labs/torque/internal/plugin"
 )
@@ -169,6 +169,8 @@ type taskServiceIface interface {
 type taskLifecycleHook struct {
 	logger goplugin.Logger
 }
+
+func (h *taskLifecycleHook) PluginID() string { return "core" }
 
 func (h *taskLifecycleHook) EventTypes() []string {
 	return []string{

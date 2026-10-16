@@ -1,6 +1,6 @@
 package plugin
 
-import goplugin "github.com/hollis-labs/plugin"
+import goplugin "github.com/hollis-labs/libs/mcp/plugin-mcp/plugin-sdk"
 
 // SubscribeEvents creates a buffered channel and registers it for event broadcast.
 func (h *TorqueHost) SubscribeEvents() chan goplugin.Event {
