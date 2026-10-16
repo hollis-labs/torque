@@ -318,14 +318,14 @@ func (s *PlanService) RemovePhase(planID, phaseID string) error {
 // lifecycle generation goes up by one. Only a completed phase can be reopened
 // (a ConflictError otherwise). Do it before adding or reactivating work in the
 // phase; a completed phase does not revert on its own.
-func (s *PlanService) ReopenPhase(planID, phaseID string) (PlanPhase, error) {
+func (s *PlanService) ReopenPhase(ctx context.Context, planID, phaseID string) (PlanPhase, error) {
 	if phaseID == "" {
 		return PlanPhase{}, &ValidationError{Field: "phase_id", Message: "phase_id is required"}
 	}
 	if _, err := s.requirePlan(planID); err != nil {
 		return PlanPhase{}, err
 	}
-	r, err := s.store.ReopenPlanPhase(context.Background(), planID, phaseID)
+	r, err := s.store.ReopenPlanPhase(ctx, planID, phaseID)
 	switch {
 	case errors.Is(err, sqlstore.ErrPhaseNotFound):
 		return PlanPhase{}, &ValidationError{Field: "phase_id", Message: "phase not found: " + phaseID}

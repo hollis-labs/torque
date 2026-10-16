@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -291,4 +292,68 @@ func TestTaskScope_PlanTaskIsItsOwnPlan(t *testing.T) {
 	rows := readOutbox(t, s)
 	require.Equal(t, plan, rows[0].Env.Scope.PlanID)
 	require.Empty(t, rows[0].Env.Scope.PhaseID)
+}
+
+// Two transactions finishing the last two members at once must produce exactly
+// one phase.completed, whichever commits second.
+func TestPhaseLifecycle_ConcurrentLastMembersCompleteExactlyOnce(t *testing.T) {
+	for round := 0; round < 10; round++ {
+		s := setupTestStore(t)
+		plan, m := phasePlan(t, s, 2)
+		require.NoError(t, s.TransitionTask(m[0], "doing"))
+		require.NoError(t, s.TransitionTask(m[1], "doing"))
+
+		var wg sync.WaitGroup
+		for _, id := range m {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				require.NoError(t, s.TransitionTask(id, "done"))
+			}()
+		}
+		wg.Wait()
+
+		completed := 0
+		for _, r := range readOutbox(t, s) {
+			if r.Kind == "phase.completed" {
+				completed++
+			}
+		}
+		require.Equal(t, 1, completed, "round %d", round)
+		require.Equal(t, sqlstore.PhaseCompleted, phaseState(t, s, plan).State)
+	}
+}
+
+// A forced re-assertion writes a task event but is not a change in the members.
+func TestPhaseLifecycle_ForcedSelfTransitionAddsNoEdge(t *testing.T) {
+	s := setupTestStore(t)
+	plan, m := phasePlan(t, s, 1)
+	require.NoError(t, s.TransitionTask(m[0], "done"))
+	before := kinds(readOutbox(t, s))
+	require.NoError(t, s.TransitionTaskOpts(context.Background(), m[0], "done", sqlstore.TransitionOpts{Forced: true}))
+	after := kinds(readOutbox(t, s))
+	require.Equal(t, append(before, "task.state_changed"), after, "only the re-assertion itself")
+	require.Equal(t, sqlstore.PhaseCompleted, phaseState(t, s, plan).State)
+}
+
+// The phase edge is attributed to whoever made the member change.
+func TestPhaseLifecycle_EdgesInheritTheTrigger(t *testing.T) {
+	s := setupTestStore(t)
+	_, m := phasePlan(t, s, 1)
+	ctx := sqlstore.ContextWithTrigger(context.Background(), sqlstore.Trigger{Kind: sqlstore.TriggerAgent, Ref: "mcp:torque_task_transition"})
+	require.NoError(t, s.TransitionTaskOpts(ctx, m[0], "done", sqlstore.TransitionOpts{}))
+	rows := readOutbox(t, s)
+	require.Equal(t, []string{"task.state_changed", "phase.started", "phase.completed"}, kinds(rows))
+	for _, r := range rows {
+		require.Equal(t, "agent", r.Trigger, r.Kind)
+	}
+
+	// Explicit scheduler trigger on a fresh phase.
+	s2 := setupTestStore(t)
+	_, m2 := phasePlan(t, s2, 1)
+	require.NoError(t, s2.TransitionTaskOpts(context.Background(), m2[0], "doing", sqlstore.TransitionOpts{
+		Trigger: sqlstore.Trigger{Kind: sqlstore.TriggerScheduler, Ref: "scheduler"}}))
+	rows = readOutbox(t, s2)
+	require.Equal(t, "phase.started", rows[1].Kind)
+	require.Equal(t, "scheduler", rows[1].Trigger)
 }
