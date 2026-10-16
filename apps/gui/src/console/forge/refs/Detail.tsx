@@ -9,6 +9,7 @@ import type { CheckRun, Commit, FileDiff, PullRequest, Repo, Review } from '../t
 import { getForgeClient } from './client'
 import { findCommit } from './resolvers'
 import { checksText, checksTone, reviewText, sizeText, summarizeChecks } from './entity'
+import { PrWorkspaceLink } from '../workspace/PrWorkspaceLink'
 import { parseCommitCanonical, parsePrCanonical, parseRepoCanonical, prCanonical, shortSha } from './parse'
 
 // Read-only drawer bodies. Anything that writes (comment, review, assign) is
@@ -146,6 +147,14 @@ export function ForgePrDetail({ refId }: RefDetailProps) {
   const { p, commits, files } = pr.data
   return (
     <div data-testid="forge-pr-detail">
+      {ref && (
+        <PrWorkspaceLink
+          prRef={ref}
+          className="mb-3 inline-flex h-8 items-center border border-amber-300 bg-amber-300 px-3 font-mono text-[11px] uppercase tracking-widest text-zinc-950 hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300"
+        >
+          Open workspace
+        </PrWorkspaceLink>
+      )}
       <Section title="Summary">
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-[12px]">
           <dt className={LABEL}>Author</dt>

@@ -15,6 +15,7 @@ import { usePagedList } from '@/hooks/use-paged-list'
 import { ConsoleProvider, ConsoleDebugPanel, FixtureSource, AlertBadge, AlertListItem, AlertToast, sampleAlerts } from '@/console'
 import { MetricsPreview, ScopeMetricsPreview } from '@/console/metrics'
 import { CardsPreview } from '@/console/cards/CardsPreview'
+import { PendingPrInboxPreview } from '@/console/forge/inbox/InboxPreview'
 import { HitlPreview } from '@/console/hitl/HitlPreview'
 import { WorkflowPreview } from '@/console/workflow/WorkflowPreview'
 import { AutolinkShowcase } from '@/console/autolink/Showcase'
@@ -97,6 +98,13 @@ export default function WidgetPreviewPage() {
             Console Cards (fixture)
           </h2>
           <CardsPreview />
+        </section>
+
+        <section className="rounded border border-border/60 bg-card/40 p-4">
+          <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            Pending PR inbox (mock forge)
+          </h2>
+          <PendingPrInboxPreview />
         </section>
 
         <section className="rounded border border-border/60 bg-card/40 p-4">

@@ -1,4 +1,5 @@
 import type { ForgeClient } from './client'
+import { currentConfirmToken } from './confirm-token'
 import { HttpForgeClient, type HttpForgeClientOptions } from './http'
 import { createMockForgeClient } from './mock'
 
@@ -38,5 +39,6 @@ export function createDefaultForgeClient(): ForgeClient {
     search: typeof window !== 'undefined' ? window.location.search : '',
     env: import.meta.env.VITE_FORGE_SOURCE as string | undefined,
     baseUrl: import.meta.env.VITE_FORGE_BASE_URL as string | undefined,
+    http: { confirmToken: currentConfirmToken },
   })
 }

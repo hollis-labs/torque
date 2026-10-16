@@ -3,6 +3,8 @@ import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree
 import { NavRail, TooltipProvider, Toaster, type NavRailItem } from '@hollis-labs/sysop-ui'
 import { ApiProvider } from '@/hooks/use-api'
 import { ConsoleShell, AlertTrayTrigger } from '@/console'
+import { ShellAutolink } from '@/console/autolink'
+import { PrWorkspacePage, PR_WORKSPACE_ROUTE } from '@/console/forge/workspace'
 import { ActiveRunsProvider } from '@/hooks/use-active-runs'
 import BoardPage from '@/pages/BoardPage'
 import TaskDetailPage from '@/pages/TaskDetailPage'
@@ -101,6 +103,7 @@ function AppShell() {
           <Route path="/dashboard/_widget-preview" element={<WidgetPreviewPage />} />
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path={PR_WORKSPACE_ROUTE} element={<PrWorkspacePage />} />
         </Routes>
       </main>
     </div>
@@ -113,9 +116,11 @@ export default function App() {
       <ActiveRunsProvider>
         <TooltipProvider>
           <BrowserRouter>
-            <ConsoleShell>
-              <AppShell />
-            </ConsoleShell>
+            <ShellAutolink>
+              <ConsoleShell>
+                <AppShell />
+              </ConsoleShell>
+            </ShellAutolink>
           </BrowserRouter>
           <Toaster position="bottom-right" />
         </TooltipProvider>

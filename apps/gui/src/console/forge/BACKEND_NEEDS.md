@@ -122,3 +122,93 @@ Code: `forge/refs/`. Reads only, through the installed `ForgeClient`.
 5. Rate limiting and error codes: chips treat `not_found`/`invalid_args` as
    not-found and any other `ForgeError` as a retryable error; a distinct
    retryable `rate_limited` code would let the chip show a better message.
+
+## Pending-PR inbox (G4: detect, triage, resolve, assign)
+
+Code: `forge/inbox/`. Reads `ForgeClient.listPendingPrs()`; triage and
+assignment records live in the StateStore; assignment is dispatched through the
+ActionBus (`pr.assign`) behind IdentityConfirm. Extends, does not repeat, the
+open questions above (`listPendingPrs` ownership and "reasons").
+
+1. `listPendingPrs` semantics. Today computed from the mock only. Needed: the
+   caller's view (review requested of me/my agents, authored with failing
+   checks or changes requested, mentioned, stale), per watched repo set, with
+   `reasons` filled in server-side. `stale` is also derived client-side from
+   `updatedAt` (default 7 days, `staleMs` prop); the backend should own that
+   threshold. A `mentioned` reason is missing from `PendingPrSummary.reasons`.
+2. Live updates: emit `pr.review_requested`, `pr.checks_failed`,
+   `pr.changes_requested`, `pr.conflicting`, `pr.stale` on the Console event bus
+   (subject `{type:'pr', id:'<host>:<owner>/<name>#<n>'}`, payload `repo`,
+   `number`, `title`, `author`, `checks`, `reasons`). Until then `PendingPrSource`
+   polls and maps via a swappable `PendingPrEventMapper`; the last three kinds
+   are inbox-defined and need agreeing with F1.
+3. StateStore keys used (server-stored, readable by agents): `pr-inbox:<prKey>`
+   (dismiss / snooze / settle `resolved`) and `pr-assign:<prKey>:<agentId>:<task>`
+   (settled with resolution `assigned`, note JSON `{messageId, forgeAssigned}`).
+   The store needs prefix queries for these and should de-dupe server-side.
+4. `assign` needs an agent -> forge login mapping. `AgentRecord` has no forge
+   identity, so the GUI assumes login = agent slug (`forgeLogin` override).
+   Also the forge actor question above: assigning someone else is done with the
+   token owner's credentials.
+5. Assignment is two effects (forge assign + mail send) the GUI sequences
+   itself; a single backend op `assign_pr_to_agent` (idempotent on the
+   `dedupeKey` in the payload, atomic or compensating) would remove the partial
+   failure case (assignee set, message failed).
+6. Optional Torque task creation linked to the PR (`source_ref` =
+   `github:owner/name#n`) is NOT done in the GUI: needs a task-create route that
+   accepts `source_ref` and returns the id for the assignment payload.
+7. Agents need an address: agents without `identity.urn` get a fallback
+   `msg://agent/console/<id>`, which may not be deliverable.
+8. G3 route: `prWorkspaceHref` in `forge/inbox/href.ts` is a stand-in; swap to
+   G3's exported helper at merge.
+## PR workspace (G3: diff viewer, inline threads, reviews)
+
+Code: `forge/workspace/`. Reads use `getPr`, `getDiff`, `listCommits`,
+`listComments`; writes dispatch on the ActionBus and BOTH sit behind
+IdentityConfirm (owner decision): `forge.pr.comment` (scope `forge.write`;
+one step-up per general/inline/reply comment) and `forge.pr.review` (scopes
+`forge.write` plus `forge.review` for approve/request_changes). Queued
+"Add to review" comments are sent inside the single review submission and are
+covered by that one step-up (no per-comment prompt). The backend must verify
+the `X-Identity-Confirm` token covers `forge.write` on `POST .../comments`,
+not only on reviews, and keep tokens short-lived (2 minute TTL requested) since
+each comment prompts separately. The IdentityConfirm token
+reaches `HttpForgeClient` through `confirm-token.ts` (`currentConfirmToken`
+is the factory default for the `confirmToken` option). Needs beyond
+BACKEND_REQUIREMENTS.md:
+
+1. Per-file lazy diff: `getDiff` returns every file with every hunk. For big
+   PRs the GUI wants `GET .../files` (path, status, additions, deletions,
+   binary, truncated; no hunks) and `GET .../files/{path}/patch` returning one
+   `FileDiff`. The GUI already collapses files of 400+ lines and renders
+   them in 300-row windows, so only the transport is missing.
+2. Outdated detection: `ReviewComment.commitSha` must be the commit the
+   comment was made on, and `PullRequest.headSha` the current head. The GUI
+   marks a thread outdated when they differ and shows it detached from the
+   line (line numbers refer to another commit). Preferably the backend sends
+   `outdated: boolean` and the original `diffHunk`, so the GUI need not infer.
+3. Resolve / unresolve a thread (`resolveThread(ref, threadId, resolved)`,
+   effect write). `ReviewComment.resolved` is displayed but cannot be changed.
+4. Merge: no `mergePr` op exists. The workspace shows merge state (mergeable,
+   checks, reviews, draft) and links to the forge. Wanted: `mergePr(ref,
+   { method: 'merge'|'squash'|'rebase' })`, effect `lifecycle`, behind
+   IdentityConfirm scope `forge.merge`, plus branch-protection reasons in
+   `PullRequest` (`mergeBlockers: string[]`) so the GUI need not infer them.
+5. Pending (draft) reviews: the GUI batches inline comments client-side and
+   sends them in one `reviewPr` call. A forge-side pending review is not
+   needed, but `reviewPr` must be atomic (all comments or none) and return the
+   created comment ids (or the client refetches, as it does now).
+6. Edit / delete own comment (`updateComment`, `deleteComment`): not in the
+   contract; not offered in the UI yet.
+7. Reactions, suggested changes and multi-line comment ranges
+   (`startLine`/`endLine` on `AddCommentInput`): not supported; single-line
+   anchors only.
+8. Viewer identity: optimistic comments need the acting user (login, agent
+   flag). Today the placeholder author is `you`; wanted `GET /api/v1/me` or
+   `ForgeClient.viewer()` for forge identity vs. the Console user.
+9. Comment body format: the GUI renders bodies as plain text with autolink
+   chips (no HTML). If the forge returns markdown, say so; a sanitised
+   `bodyHtml` is optional and would be rendered only after sanitising.
+10. Idempotency: comment posting is user-retryable after a failure; the
+    `Idempotency-Key` header in BACKEND_REQUIREMENTS.md section 3.4 is
+    needed so a retry after a timeout does not double-post.
