@@ -66,7 +66,7 @@ Each event is the phase's own (`msg://phase/torque/<plan>/<phase>`; phase ids ar
 per plan and the subject never changes), carries `progress{done,total}` and
 `lifecycle_generation`, and, when a member's `task.state_changed` caused it,
 names that event as its `corr.causation_id`. A membership change has no task
-event and so no causation. `scope.plan_id` and `scope.phase_id` on task events
+event and so no causation. `scope.task_id` on a phase event is the plan task's id (the phase has none of its own). `scope.plan_id` and `scope.phase_id` on task events
 come from these records.
 
 ## Service surface
