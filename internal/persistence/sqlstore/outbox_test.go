@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,7 +52,9 @@ func TestOutboxTrimBefore_RemovesOnlyTheHeadAndAdvancesPrunedThrough(t *testing.
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, n)
 
-	left, err := store.OutboxAfter(ctx, 0, 10)
+	meta0, err := store.OutboxMeta(ctx)
+	require.NoError(t, err)
+	left, err := store.OutboxAfter(ctx, meta0.PrunedThrough, 10)
 	require.NoError(t, err)
 	require.Len(t, left, 1)
 	meta, err := store.OutboxMeta(ctx)
@@ -120,4 +123,29 @@ func TestOutboxMintGeneration_TwoFreshLogsDiffer(t *testing.T) {
 	ma, _ := a.OutboxMeta(context.Background())
 	mb, _ := b.OutboxMeta(context.Background())
 	assert.NotEqual(t, ma.Generation, mb.Generation, "a recreated database is distinguishable")
+}
+
+// A read from a cursor the log has been trimmed past is refused with the trim
+// point, so a reader cannot silently skip rows.
+func TestOutboxAfter_RefusesACursorBehindTheTrimPoint(t *testing.T) {
+	store := setupTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, store.CreateTask(sampleTask("CW-OBP-1")))
+	require.NoError(t, store.TransitionTask("CW-OBP-1", "doing"))
+	time.Sleep(15 * time.Millisecond)
+	cutoff := time.Now()
+	time.Sleep(15 * time.Millisecond)
+	require.NoError(t, store.TransitionTask("CW-OBP-1", "review"))
+	_, err := store.OutboxTrimBefore(ctx, cutoff)
+	require.NoError(t, err)
+
+	_, err = store.OutboxAfter(ctx, 0, 10)
+	var pruned *sqlstore.OutboxPrunedError
+	require.ErrorAs(t, err, &pruned)
+	assert.EqualValues(t, 1, pruned.PrunedThrough)
+	assert.EqualValues(t, 2, pruned.Head)
+
+	rows, err := store.OutboxAfter(ctx, 1, 10) // at the trim point is fine
+	require.NoError(t, err)
+	assert.Len(t, rows, 1)
 }

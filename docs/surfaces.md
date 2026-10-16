@@ -38,8 +38,12 @@ park). Those frames carry an SSE `id` of `<generation>:<seq>`. Reconnect with
 `Last-Event-ID` (or `?since=`) to be replayed what you missed; with no id you
 get live events only. If the log cannot honour the id (a pruned prefix, another
 generation, a cursor ahead of the head, a malformed id) you get one `gap` frame
-with `reason`, `earliest_available` and `high_water`, then the events that
-remain. Delivery is at-least-once: dedupe on `envelope.id`.
+with `reason`, `earliest_available` and `high_water`. After a `pruned` gap the
+events that remain follow; after `bad_cursor`, `generation_changed` and
+`cursor_ahead` the stream continues live from the head. The gap frame carries an
+`id` (where the stream resumes), so a reconnect does not repeat it. If the log
+is trimmed past a connected client's position, the client gets a `pruned` gap
+mid-stream. Delivery is at-least-once: dedupe on `envelope.id`.
 
 A task transition is one frame. Its top level keeps the shape older clients
 read (`type: "task.transitioned"`, `data.task_id`, `data.status`, plus
@@ -50,7 +54,8 @@ non-forced transition to the status the task already has writes no event. The ev
 (the GUI sends it on every request), and anything else over HTTP is `agent`.
 Who the caller is goes only in the event's `actor` block. The
 other frames on the stream (CRUD pings, scheduler run events) are best effort
-and carry no id. The reader is SQLite-only for now.
+and carry no id. The reader is SQLite-only for now: on Postgres `/events` carries no task
+transitions (the events are still written).
 
 Forums uses the backend-held Tether operator credential and the
 [Tether Forums contract](https://github.com/hollis-labs/tether/blob/feat/forums-hierarchy/docs/forums.md).

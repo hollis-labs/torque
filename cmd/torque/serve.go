@@ -567,7 +567,7 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// from other Hollis apps (Nanite / Tether / Hadron / Torque-MCP clients)
 	// continue the same trace. Sits outside the chi router's CORS step so
 	// preflights are also visible.
-	srv := &http.Server{Handler: propagation.HTTPMiddleware(handler)}
+	srv := &http.Server{Handler: httpserver.KeepRawWriter(propagation.HTTPMiddleware(handler))}
 
 	// Graceful HTTP shutdown is driven by runCtx, which fires when either the
 	// parent ctx is cancelled (normal SIGINT/SIGTERM path) OR when we call

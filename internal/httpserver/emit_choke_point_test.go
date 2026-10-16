@@ -15,7 +15,11 @@ import (
 // checkpoint.* is not listed yet; its broadcasts go when checkpoint state events
 // do (a later T1 PR).
 func TestStateKindsAreNotBroadcastOutsideTheOutbox(t *testing.T) {
-	banned := []string{`"task.transitioned"`, `"task.state_changed"`}
+	banned := []string{
+		`"task.transitioned"`, `"task.state_changed"`,
+		// the plugin bus constants for the same kind
+		`plugin.EventTaskTransitioned`, `EmitTaskTransitioned(`,
+	}
 	for _, dir := range []string{".", "../mcpadapter", "../service"} {
 		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
 		if err != nil {

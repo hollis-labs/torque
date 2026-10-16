@@ -26,6 +26,19 @@ type OutboxMeta struct {
 	PrunedThrough int64
 }
 
+// OutboxPrunedError is returned by OutboxAfter when the log has been trimmed
+// past the cursor the caller asked from: the rows between are gone, and a
+// reader must be told rather than silently skip them.
+type OutboxPrunedError struct {
+	Generation    int64
+	PrunedThrough int64
+	Head          int64
+}
+
+func (e *OutboxPrunedError) Error() string {
+	return fmt.Sprintf("outbox pruned through %d (generation %d)", e.PrunedThrough, e.Generation)
+}
+
 // OutboxEvent is one stored event with its log-assigned fields filled in.
 type OutboxEvent struct {
 	Seq        int64
@@ -80,6 +93,13 @@ func (s *Store) OutboxAfter(ctx context.Context, after int64, limit int) ([]Outb
 	meta, err := s.OutboxMeta(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if after < meta.PrunedThrough {
+		head, herr := s.OutboxHead(ctx)
+		if herr != nil {
+			return nil, herr
+		}
+		return nil, &OutboxPrunedError{Generation: meta.Generation, PrunedThrough: meta.PrunedThrough, Head: head}
 	}
 	rows, err := s.ReadDB().QueryContext(ctx,
 		`SELECT seq, envelope FROM event_outbox WHERE seq > ? ORDER BY seq LIMIT ?`, after, limit)
@@ -153,20 +173,21 @@ func (s *Store) OutboxMintGeneration(ctx context.Context) (bool, error) {
 // so everything older than cutoff is a contiguous prefix. Returns the number
 // of rows removed.
 func (s *Store) OutboxTrimBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	w, err := s.BeginWriteTx(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer w.Rollback()
-
+	// Find the cut on a reader connection: occurred_at is not indexed, so this
+	// scan must not hold the single writer.
 	var maxSeq sql.NullInt64
-	if err := w.tx.QueryRow(`SELECT MAX(seq) FROM event_outbox WHERE occurred_at < ?`,
+	if err := s.ReadDB().QueryRowContext(ctx, `SELECT MAX(seq) FROM event_outbox WHERE occurred_at < ?`,
 		cutoff.UTC().Format(time.RFC3339Nano)).Scan(&maxSeq); err != nil {
 		return 0, err
 	}
 	if !maxSeq.Valid {
 		return 0, nil
 	}
+	w, err := s.BeginWriteTx(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer w.Rollback()
 	res, err := w.tx.Exec(`DELETE FROM event_outbox WHERE seq <= ?`, maxSeq.Int64)
 	if err != nil {
 		return 0, err

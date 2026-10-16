@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -135,8 +136,12 @@ func (f *outboxFeed) start(ctx context.Context, lastID string) (cur int64, gap *
 		return head, nil, nil
 	}
 	gen, seq, ok := parseEventID(lastID)
-	mk := func(reason string) *SSEEvent {
+	mk := func(reason string, resumeAt int64) *SSEEvent {
 		return &SSEEvent{
+			// The gap frame names where the stream resumes, so the browser's
+			// Last-Event-ID moves past the position the log could not honour and a
+			// reconnect does not repeat the gap.
+			id:   fmt.Sprintf("%d:%d", meta.Generation, resumeAt),
 			Type: "gap",
 			Data: map[string]interface{}{
 				"reason":             reason,
@@ -148,24 +153,42 @@ func (f *outboxFeed) start(ctx context.Context, lastID string) (cur int64, gap *
 	}
 	switch {
 	case !ok:
-		return head, mk("bad_cursor"), nil
+		return head, mk("bad_cursor", head), nil
 	case gen != meta.Generation:
-		return head, mk("generation_changed"), nil
+		return head, mk("generation_changed", head), nil
 	case seq > head:
-		return head, mk("cursor_ahead"), nil
+		return head, mk("cursor_ahead", head), nil
 	case seq < meta.PrunedThrough:
-		return meta.PrunedThrough, mk("pruned"), nil
+		return meta.PrunedThrough, mk("pruned", meta.PrunedThrough), nil
 	}
 	return seq, nil, nil
 }
 
-// drain writes every outbox row after *cur to w, advancing *cur. Each write
-// has a deadline; a client that cannot take a batch in time is dropped and
-// resumes from its last id.
-func (f *outboxFeed) drain(ctx context.Context, w http.ResponseWriter, fl http.Flusher, cur *int64) error {
-	rc := http.NewResponseController(w)
+// drain writes every outbox row after *cur to w, advancing *cur. If the log
+// has been trimmed past *cur since the last read, the client gets a gap frame
+// (and *cur moves to the trim point) instead of silently missing rows. Each
+// batch has a write deadline; a client that cannot take it in time is dropped
+// and resumes from its last id.
+func (f *outboxFeed) drain(ctx context.Context, w http.ResponseWriter, rc *http.ResponseController, fl http.Flusher, cur *int64) error {
 	for {
 		rows, err := f.src.OutboxAfter(ctx, *cur, outboxBatch)
+		var pruned *sqlstore.OutboxPrunedError
+		if errors.As(err, &pruned) {
+			_ = rc.SetWriteDeadline(time.Now().Add(outboxWriteTimeout))
+			writeFrame(w, fl, SSEEvent{
+				Type: "gap",
+				Data: map[string]interface{}{
+					"reason":             "pruned",
+					"earliest_available": fmt.Sprintf("%d:%d", pruned.Generation, pruned.PrunedThrough+1),
+					"high_water":         fmt.Sprintf("%d:%d", pruned.Generation, pruned.Head),
+				},
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				id:        fmt.Sprintf("%d:%d", pruned.Generation, pruned.PrunedThrough),
+			})
+			_ = rc.SetWriteDeadline(time.Time{})
+			*cur = pruned.PrunedThrough
+			continue
+		}
 		if err != nil {
 			return err
 		}

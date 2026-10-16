@@ -29,6 +29,10 @@ type SSEEvent struct {
 	// Envelope is the full v1.1 event when the frame comes from the outbox.
 	// Type and Data keep the legacy shape clients already read.
 	Envelope json.RawMessage `json:"envelope,omitempty"`
+
+	// id is the SSE id line for this frame. Outbox frames and gap frames set it;
+	// best-effort pings leave it empty and carry none.
+	id string
 }
 
 // NewSSEHub returns an initialised hub.
@@ -61,6 +65,18 @@ func (h *SSEHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		http.Error(w, "SSE not supported", http.StatusInternalServerError)
 		return
+	}
+
+	// The durable stream relies on a write deadline to shed a client that stops
+	// reading. If the connection cannot take one, say so now rather than serve a
+	// stream that can pin a goroutine for as long as TCP allows.
+	rc := connController(w, r)
+	if h.outbox != nil {
+		if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+			log.Printf("[sse] write deadlines unsupported on this connection (%v); refusing the stream", err)
+			http.Error(w, "SSE write deadline unsupported", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -109,13 +125,14 @@ func (h *SSEHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var err error
 		cur, gap, err = feed.start(ctx, lastID)
 		if err != nil {
+			// End the response: a stream that lives on with heartbeats but never
+			// sends a state change cannot be told from a quiet system. The browser's
+			// EventSource reconnects.
 			log.Printf("[sse] outbox start: %v", err)
-			feed = nil
-		} else if gap != nil {
-			if data, err := json.Marshal(gap); err == nil {
-				fmt.Fprintf(w, "data: %s\n\n", data) //nolint:errcheck
-				flusher.Flush()
-			}
+			return
+		}
+		if gap != nil {
+			writeFrame(w, flusher, *gap)
 		}
 	}
 
@@ -125,7 +142,7 @@ func (h *SSEHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Take the wait channel before reading so a commit in between
 			// still wakes us.
 			outboxWake = feed.wait()
-			if err := feed.drain(ctx, w, flusher, &cur); err != nil {
+			if err := feed.drain(ctx, w, rc, flusher, &cur); err != nil {
 				if ctx.Err() == nil {
 					log.Printf("[sse] outbox drain: %v", err)
 				}
@@ -160,4 +177,17 @@ func (h *SSEHub) waitOnce(ctx context.Context, ch chan SSEEvent, outboxWake <-ch
 			flusher.Flush()
 		}
 	}
+}
+
+// writeFrame writes one SSE frame, with its id line when it has one.
+func writeFrame(w http.ResponseWriter, fl http.Flusher, ev SSEEvent) {
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	if ev.id != "" {
+		fmt.Fprintf(w, "id: %s\n", ev.id) //nolint:errcheck
+	}
+	fmt.Fprintf(w, "data: %s\n\n", data) //nolint:errcheck
+	fl.Flush()
 }
