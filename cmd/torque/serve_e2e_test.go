@@ -77,6 +77,17 @@ func TestServeE2EMockTaskCompletes(t *testing.T) {
 	// requires no task state.
 	waitForListen(t, base+"/api/v1/scheduler/status", 5*time.Second)
 
+	healthResp, err := http.Get(base + "/healthz")
+	require.NoError(t, err)
+	defer healthResp.Body.Close()
+	require.Equal(t, http.StatusOK, healthResp.StatusCode)
+	assert.Equal(t, "application/json", healthResp.Header.Get("Content-Type"))
+	var health map[string]string
+	require.NoError(t, json.NewDecoder(healthResp.Body).Decode(&health))
+	assert.Equal(t, "ok", health["status"])
+	assert.Equal(t, version, health["version"], "serve wires the CLI build version")
+	assert.NotEmpty(t, health["commit"])
+
 	// Create a task that targets the mock executor. `on_done: "close"` makes
 	// the lifecycle transition "doing" directly to "done" on executor success,
 	// so we can observe a definitive terminal state via the HTTP API.
