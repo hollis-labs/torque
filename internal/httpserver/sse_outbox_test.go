@@ -288,18 +288,35 @@ func (e *outboxEnv) lastID(t *testing.T) string {
 func TestEventsOutbox_HTTPTransitionEmitsOnceNoDirectBroadcast(t *testing.T) {
 	e := setupOutboxServer(t)
 	seedTask(t, e, "CW-SSE-0050")
+	seedTask(t, e, "CW-SSE-0051")
 	ch := e.stream(t, "")
 	next(t, ch, "connected")
 
-	resp, err := http.Post(e.ts.URL+"/api/v1/tasks/CW-SSE-0050/transition", "application/json",
-		strings.NewReader(`{"status":"doing"}`))
-	require.NoError(t, err)
-	resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	do := func(id string, gui bool) {
+		req, err := http.NewRequest(http.MethodPost, e.ts.URL+"/api/v1/tasks/"+id+"/transition", strings.NewReader(`{"status":"doing"}`))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		if gui {
+			req.Header.Set("X-Client", "browser")
+		}
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	}
+	triggerKind := func(f frame) string {
+		env, _ := f.Envelope["payload"].(map[string]interface{})
+		trig, _ := env["trigger"].(map[string]interface{})
+		kind, _ := trig["kind"].(string)
+		return kind
+	}
 
+	do("CW-SSE-0050", true)
 	f := next(t, ch, "task.transitioned")
-	env, _ := f.Envelope["payload"].(map[string]interface{})
-	trig, _ := env["trigger"].(map[string]interface{})
-	assert.Equal(t, "human", trig["kind"], "the HTTP handler stamps the trigger")
+	assert.Equal(t, "human", triggerKind(f), "a request the GUI marked is human")
 	noFrame(t, ch, "task.transitioned", 400*time.Millisecond) // no second, un-id'd copy
+
+	do("CW-SSE-0051", false)
+	f = next(t, ch, "task.transitioned")
+	assert.Equal(t, "agent", triggerKind(f), "an unmarked API call is an agent call")
 }

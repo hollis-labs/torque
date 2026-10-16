@@ -44,7 +44,11 @@ remain. Delivery is at-least-once: dedupe on `envelope.id`.
 A task transition is one frame. Its top level keeps the shape older clients
 read (`type: "task.transitioned"`, `data.task_id`, `data.status`, plus
 `from`/`to`), and `envelope` carries the full `task.state_changed` event. A
-non-forced transition to the status the task already has writes no event. The
+non-forced transition to the status the task already has writes no event. The event's
+`trigger.kind` comes from the surface, not from identity: every MCP call is
+`agent`, an HTTP request is `human` only when it carries `X-Client: browser`
+(the GUI sends it on every request), and anything else over HTTP is `agent`.
+Who the caller is goes only in the event's `actor` block. The
 other frames on the stream (CRUD pings, scheduler run events) are best effort
 and carry no id. The reader is SQLite-only for now.
 
