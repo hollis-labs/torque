@@ -223,8 +223,15 @@ func New(
 	return s
 }
 
+// SetLandingEvaluator installs the typed landing check the lifecycle runs
+// before an on_done close/notify exit marks a task done; its result is
+// recorded as a gate.evaluated event. It takes precedence over SetLandingGate.
+func (s *Scheduler) SetLandingEvaluator(g func(context.Context, *sqlstore.TaskRecord) sqlstore.GateEvaluation) {
+	s.lifecycle.SetLandingEvaluator(g)
+}
+
 // SetLandingGate installs the landing check the lifecycle runs before an
-// on_done close/notify exit marks a task done.
+// on_done close/notify moves a task to done, as the unmet requirements.
 func (s *Scheduler) SetLandingGate(g func(context.Context, *sqlstore.TaskRecord) string) {
 	s.lifecycle.SetLandingGate(g)
 }

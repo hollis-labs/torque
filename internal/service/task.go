@@ -1140,7 +1140,22 @@ func (s *TaskService) ForceTransition(ctx context.Context, id, newStatus string)
 			),
 		}
 	}
-	if err := s.store.TransitionTaskOpts(ctx, id, newStatus, sqlstore.TransitionOpts{Forced: true}); err != nil {
+	if skips := forcedGateSkips(task, newStatus); len(skips) > 0 {
+		wtx, err := s.store.BeginWriteTx(ctx)
+		if err != nil {
+			return err
+		}
+		defer wtx.Rollback()
+		if err := wtx.AppendGateEvaluations(id, 0, skips, sqlstore.ResolveTrigger(ctx)); err != nil {
+			return err
+		}
+		if err := wtx.TransitionTaskOpts(id, newStatus, sqlstore.TransitionOpts{Forced: true}); err != nil {
+			return err
+		}
+		if err := wtx.Commit(); err != nil {
+			return err
+		}
+	} else if err := s.store.TransitionTaskOpts(ctx, id, newStatus, sqlstore.TransitionOpts{Forced: true}); err != nil {
 		return err
 	}
 	s.notifyTransition(ctx, id, task.Status, newStatus)
@@ -1214,6 +1229,11 @@ func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, 
 	}
 	defer wtx.Rollback()
 
+	if force {
+		if err := wtx.AppendGateEvaluations(id, 0, forcedGateSkips(task, newStatus), sqlstore.ResolveTrigger(ctx)); err != nil {
+			return err
+		}
+	}
 	if err := wtx.TransitionTaskOpts(id, newStatus, sqlstore.TransitionOpts{Forced: force}); err != nil {
 		return err
 	}
