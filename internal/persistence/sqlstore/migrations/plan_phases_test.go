@@ -63,6 +63,10 @@ func TestMigration043PlanPhasesBackfillSQLite(t *testing.T) {
 	insertTask(t, db, "C5", "agent", "todo", "P1", `{"phase_id":"ph-9"}`)
 	insertTask(t, db, "C6", "agent", "todo", "", `{"phase_id":"ph-1"}`)
 	insertTask(t, db, "C7", "agent", "todo", "P1", `{{`)
+	// Shape seen on the live hub: a done child naming a phase, under a parent
+	// that is not a plan (kind=decision).
+	insertTask(t, db, "D1", "decision", "done", "", "")
+	insertTask(t, db, "C8", "agent", "done", "D1", `{"phase_id":"ph-5"}`)
 
 	require.NoError(t, migrations.Run(db))
 
@@ -97,15 +101,21 @@ func TestMigration043PlanPhasesBackfillSQLite(t *testing.T) {
 	}
 	require.Equal(t, "ph-1", phaseOf("C1").String)
 	require.Equal(t, "ph-2", phaseOf("C4").String)
-	for _, id := range []string{"C5", "C6", "C7"} {
+	for _, id := range []string{"C5", "C6", "C7", "C8"} {
 		require.False(t, phaseOf(id).Valid, id)
 	}
 
 	var repairs int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM plan_phase_repairs WHERE task_id IN ('C5','C6')`).Scan(&repairs))
-	require.Equal(t, 2, repairs)
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM plan_phase_repairs WHERE task_id IN ('C5','C6','C8')`).Scan(&repairs))
+	require.Equal(t, 3, repairs)
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM plan_phase_repairs`).Scan(&repairs))
-	require.Equal(t, 2, repairs)
+	require.Equal(t, 3, repairs)
+
+	// The triggers do not fire on unrelated updates to a flagged row.
+	_, err = db.Exec(`UPDATE tasks SET status = 'review', title = 'renamed' WHERE id IN ('C5','C8')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE tasks SET parent_id = NULL WHERE id = 'C8'`)
+	require.NoError(t, err)
 }
 
 func TestMigration043PhaseMembershipIsValidatedSQLite(t *testing.T) {
@@ -183,6 +193,8 @@ func TestMigration043PlanPhasesPostgres(t *testing.T) {
 	ins("C5", "agent", "todo", "P1", `{"phase_id":"ph-9"}`)
 	ins("C6", "agent", "todo", "", `{"phase_id":"ph-1"}`)
 	ins("C7", "agent", "todo", "P1", `{{`)
+	ins("D1", "decision", "done", "", "")
+	ins("C8", "agent", "done", "D1", `{"phase_id":"ph-5"}`)
 
 	body, err := os.ReadFile("postgres/043_plan_phases.sql")
 	require.NoError(t, err)
@@ -209,7 +221,9 @@ func TestMigration043PlanPhasesPostgres(t *testing.T) {
 	require.Equal(t, "ph-2", phase.String)
 	var repairs int
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM plan_phase_repairs`).Scan(&repairs))
-	require.Equal(t, 2, repairs)
+	require.Equal(t, 3, repairs, "C5, C6 and the child of a non-plan parent")
+	_, err = db.Exec(`UPDATE tasks SET status = 'review', title = 'renamed' WHERE id = 'C8'`)
+	require.NoError(t, err, "the triggers do not fire on unrelated updates to a flagged row")
 
 	_, err = db.Exec(`INSERT INTO tasks (id, title, parent_id, phase_id) VALUES ('X1','x','P1','ph-7')`)
 	require.ErrorContains(t, err, "invalid phase")
