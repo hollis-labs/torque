@@ -152,10 +152,11 @@ func Evaluate(ctx context.Context, sc SourceControl, p Policy, ev Evidence) Verd
 }
 
 // failingChecks lists the unmet CI requirements and how many of them are only
-// "not finished yet" (or no checks at all) rather than a failed check.
+// "not finished yet" rather than a failed check. No checks at all is unmet, not
+// pending: nothing is running that could turn it green.
 func failingChecks(pr PRState) (out []string, pending int) {
 	if len(pr.Checks) == 0 {
-		return []string{fmt.Sprintf("PR %s has no CI checks (use landing.gate_mode=author_pasted with landing.gate_output if CI is unavailable)", pr.URL)}, 1
+		return []string{fmt.Sprintf("PR %s has no CI checks (use landing.gate_mode=author_pasted with landing.gate_output if CI is unavailable)", pr.URL)}, 0
 	}
 	for _, c := range pr.Checks {
 		switch c.Conclusion {

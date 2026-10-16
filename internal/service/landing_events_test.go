@@ -144,3 +144,41 @@ func TestEnforceLandingRecordsTheEvaluation(t *testing.T) {
 		require.Len(t, outboxFor(t, store, task.ID), 1)
 	})
 }
+
+// movingSC changes the task's status while the gate reads the PR, as a
+// concurrent request would.
+type movingSC struct {
+	state string
+	move  func()
+}
+
+func (m *movingSC) PR(context.Context, string) (landing.PRState, error) {
+	m.move()
+	return landing.PRState{URL: "u", State: m.state}, nil
+}
+
+// The gate event is written in the done's transaction, after confirming the
+// task is still in the status the gate was decided against. If it moved, no
+// event is written about a decision that no longer applies.
+func TestEnforceLandingWritesNothingWhenTheTaskMovedMeanwhile(t *testing.T) {
+	ctx := context.Background()
+	svc, store := setupServiceWithStore(t)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "t", OnDoneMerge: "pr", Metadata: map[string]any{"landing": map[string]any{"pr_url": "u"}}})
+	require.NoError(t, err)
+	require.NoError(t, svc.Task.Transition(ctx, task.ID, "doing"))
+
+	for _, state := range []string{"MERGED", "OPEN"} { // pass path, then fail path
+		sc := &movingSC{state: state}
+		sc.move = func() { require.NoError(t, svc.Task.ForceTransition(ctx, task.ID, "review")) }
+		svc.Task.SetSourceControl(sc)
+		before := len(outboxFor(t, store, task.ID))
+		require.NoError(t, svc.Task.ForceTransition(ctx, task.ID, "doing"))
+		before++ // the reset above is one state change
+		err := svc.Task.Transition(ctx, task.ID, "done")
+		var terr *service.TransitionError
+		require.ErrorAs(t, err, &terr, state)
+		for _, e := range outboxFor(t, store, task.ID)[before:] {
+			require.NotEqual(t, "gate.evaluated", e.Kind, "%s: no gate event for a stale decision", state)
+		}
+	}
+}

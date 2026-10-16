@@ -118,7 +118,7 @@ func TestEvaluateUndecided(t *testing.T) {
 		{"pr unreadable", fakeSC{err: errors.New("boom")}, Policy{OnDoneMerge: "pr"}, Evidence{PRURL: "u"}, true},
 		{"no adapter", nil, Policy{OnDoneMerge: "pr"}, Evidence{PRURL: "u"}, true},
 		{"ci unfinished", fakeSC{pr: PRState{State: "OPEN", Checks: []Check{{"build", ""}}}}, ci, Evidence{PRURL: "u"}, true},
-		{"no ci checks yet", fakeSC{pr: PRState{State: "OPEN"}}, ci, Evidence{PRURL: "u"}, true},
+		{"no ci checks is unmet", fakeSC{pr: PRState{State: "OPEN"}}, ci, Evidence{PRURL: "u"}, false},
 		{"no pr recorded", fakeSC{}, Policy{OnDoneMerge: "pr"}, Evidence{}, false},
 		{"pr open", fakeSC{pr: PRState{State: "OPEN"}}, Policy{OnDoneMerge: "pr"}, Evidence{PRURL: "u"}, false},
 		{"ci red", fakeSC{pr: PRState{State: "MERGED", Checks: []Check{{"build", "FAILURE"}}}}, ci, Evidence{PRURL: "u"}, false},

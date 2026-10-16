@@ -69,6 +69,15 @@ func (lm *LifecycleManager) SetLandingEvaluator(g func(context.Context, *sqlstor
 	lm.landingEval = g
 }
 
+// landingEvaluation is the landing check as a typed evaluator: the typed one if
+// installed, else the string gate adapted, else nil.
+func (lm *LifecycleManager) landingEvaluation() func(context.Context, *sqlstore.TaskRecord) sqlstore.GateEvaluation {
+	if lm.landingEval != nil {
+		return lm.landingEval
+	}
+	return evaluationFromReason(lm.landingGate)
+}
+
 // SetStateWriter swaps the serialized state writer used for lifecycle-side
 // task and session writes. Nil is ignored.
 func (lm *LifecycleManager) SetStateWriter(w writeq.Writer) {

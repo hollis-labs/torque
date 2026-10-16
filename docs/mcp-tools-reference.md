@@ -741,7 +741,7 @@ transition and ahead of its `task.state_changed`:
   subject is the task; `scope.run_id` is set on the scheduler path.
 - `result`: `pass` (verified), `fail` (evaluated and unmet), `blocked` (could not
   decide yet: the PR or its checks could not be read, or checks have not
-  finished; or the check itself errored), `skipped` (a landing waiver, or a
+  finished, or git status could not be read; or the check itself errored), `skipped` (a landing waiver, or a
   forced `done` over a landing policy, with the reason; never reported as a pass).
 - `blocking` says whether the outcome stopped acceptance under the existing
   policy. It differs from `result` for an evaluation error: unreadable
@@ -751,9 +751,11 @@ transition and ahead of its `task.state_changed`:
 - `reason` and `missing` (deliverable types, subtodo ids, landing requirements)
   are carried inline; no evidence artifact is stored.
 - The `task.state_changed` the gates lead to names the deciding gate event as its
-  `corr.causation_id`: the first blocking evaluation, else the last one. (A
-  manual-path pass or waiver is recorded in its own transaction before the done,
-  so that done has no gate causation.)
+  `corr.causation_id`: the first blocking evaluation, else the last one. This
+  holds on every path (scheduler, manual transition, forced done, parent
+  roll-up). Before writing, a manual transition confirms the task is still in
+  the status the gate was decided against (row-locked on Postgres); if it moved,
+  nothing is recorded and the caller gets a transition error to retry.
 - A gate that is not configured, or that the flow never reached because an
   earlier one stopped it, is not reported.
 
