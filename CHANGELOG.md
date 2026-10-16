@@ -8,6 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Task ids are never handed out twice (CW-20261016-0251). `NextTaskID` used the
+  day's current MAX, so deleting the newest task and creating another reissued
+  its `CW-YYYYMMDD-NNNN`; with `event_outbox` keeping history by task id that
+  would merge two tasks' histories. Migration 045 adds a per-day
+  `task_id_counters` table, seeded from every existing task id and every task id
+  in the outbox; the allocator takes `max(counter, live MAX) + 1` and records it
+  in the same transaction. A failed insert after allocation leaves a gap in the
+  numbering, which is fine.
 - Plan phases are records (CW-20261016-0134, T2). Migration 043 adds
   `plan_phases` (state, lifecycle generation, tombstones so ids are never
   reused) and `tasks.phase_id`, validated against the parent plan by triggers.

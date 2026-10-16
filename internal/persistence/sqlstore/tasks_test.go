@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1098,13 +1099,16 @@ func TestNextTaskID_AboveLexCeiling(t *testing.T) {
 	assert.Equal(t, want, id, "Store.NextTaskID must use numeric MAX, not lex MAX")
 
 	// Same contract for the in-transaction variant used by the writeq path.
+	// The allocation above consumed ...10000001 (the counter does not hand an
+	// id out twice, though no task was created for it), so the next one is the
+	// one after it: still past the seeded rows, not stuck at the lex ceiling.
 	tx, err := store.BeginWriteTx(context.Background())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	txID, err := tx.NextTaskID()
 	require.NoError(t, err)
-	assert.Equal(t, want, txID, "WriteTx.NextTaskID must use numeric MAX, not lex MAX")
+	assert.Equal(t, fmt.Sprintf("%s%04d", prefix, 10000002), txID, "WriteTx.NextTaskID must use numeric MAX, not lex MAX")
 }
 
 // TestListTasks_DefaultOrderUnchangedWithoutSortBy pins down that leaving
@@ -1252,4 +1256,109 @@ func TestTaskFacets_EmptyFilteredCohortHasNoBuckets(t *testing.T) {
 		assert.Zero(t, facet.TotalDistinct)
 		assert.False(t, facet.Truncated)
 	}
+}
+
+// A task id that has been handed out is never handed out again, even after the
+// task is deleted: event_outbox keeps history keyed by task_id, and a reused id
+// would merge two unrelated tasks' histories (CW-20261016-0251).
+func TestNextTaskID_NeverReusedAfterDelete(t *testing.T) {
+	if untilMidnight := timeUntilUTCMidnight(); untilMidnight < 30*time.Second {
+		t.Skipf("skipping near UTC midnight (in %s) to avoid date-rollover flake", untilMidnight)
+	}
+	store := setupTestStore(t)
+
+	id1, err := store.NextTaskID()
+	require.NoError(t, err)
+	require.NoError(t, store.CreateTask(sampleTask(id1)))
+	id2, err := store.NextTaskID()
+	require.NoError(t, err)
+	require.NoError(t, store.CreateTask(sampleTask(id2)))
+	require.NotEqual(t, id1, id2)
+
+	// Delete the newest task: the old derivation would hand its id out again.
+	require.NoError(t, store.DeleteTask(id2))
+	id3, err := store.NextTaskID()
+	require.NoError(t, err)
+	assert.NotEqual(t, id2, id3, "a deleted task's id must not be reissued")
+	assert.NotEqual(t, id1, id3)
+	assert.True(t, strings.HasSuffix(id3, "-0003"), "the counter keeps counting past the deleted id, got %s", id3)
+
+	// Delete everything: the counter still remembers.
+	require.NoError(t, store.CreateTask(sampleTask(id3)))
+	require.NoError(t, store.DeleteTask(id1))
+	require.NoError(t, store.DeleteTask(id3))
+	id4, err := store.NextTaskID()
+	require.NoError(t, err)
+	assert.True(t, strings.HasSuffix(id4, "-0004"), "with no tasks left the counter still advances, got %s", id4)
+}
+
+// The in-transaction allocator shares the counter, and a rolled-back
+// transaction takes its allocation back with it (the id never reached a task).
+func TestWriteTxNextTaskID_SharesTheCounter(t *testing.T) {
+	if untilMidnight := timeUntilUTCMidnight(); untilMidnight < 30*time.Second {
+		t.Skipf("skipping near UTC midnight (in %s) to avoid date-rollover flake", untilMidnight)
+	}
+	store := setupTestStore(t)
+	ctx := context.Background()
+
+	w, err := store.BeginWriteTx(ctx)
+	require.NoError(t, err)
+	a, err := w.NextTaskID()
+	require.NoError(t, err)
+	require.NoError(t, w.CreateTask(sampleTask(a)))
+	require.NoError(t, w.Commit())
+
+	b, err := store.NextTaskID()
+	require.NoError(t, err)
+	assert.NotEqual(t, a, b)
+	assert.True(t, strings.HasSuffix(b, "-0002"), "got %s", b)
+
+	w2, err := store.BeginWriteTx(ctx)
+	require.NoError(t, err)
+	c, err := w2.NextTaskID()
+	require.NoError(t, err)
+	require.NoError(t, w2.Rollback())
+	d, err := store.NextTaskID()
+	require.NoError(t, err)
+	assert.Equal(t, c, d, "a rolled-back allocation is not consumed")
+}
+
+// Ids that arrived without the counter (an explicit id, a restored database)
+// are still respected: the allocator takes the higher of the counter and the
+// live MAX.
+func TestNextTaskID_RespectsLiveIDsAheadOfTheCounter(t *testing.T) {
+	if untilMidnight := timeUntilUTCMidnight(); untilMidnight < 30*time.Second {
+		t.Skipf("skipping near UTC midnight (in %s) to avoid date-rollover flake", untilMidnight)
+	}
+	store := setupTestStore(t)
+	prefix := "CW-" + time.Now().UTC().Format("20060102") + "-"
+	require.NoError(t, store.CreateTask(sampleTask(prefix+"0041")))
+	id, err := store.NextTaskID()
+	require.NoError(t, err)
+	assert.Equal(t, prefix+"0042", id)
+}
+
+// Many concurrent allocations (each in its own write transaction) all get
+// distinct ids.
+func TestNextTaskID_ConcurrentAllocationsAreUnique(t *testing.T) {
+	store := setupTestStore(t)
+	const n = 40
+	ids := make([]string, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id, err := store.NextTaskID()
+			assert.NoError(t, err)
+			ids[i] = id
+		}()
+	}
+	wg.Wait()
+	seen := map[string]bool{}
+	for _, id := range ids {
+		assert.False(t, seen[id], "duplicate id %s", id)
+		seen[id] = true
+	}
+	assert.Len(t, seen, n)
 }
