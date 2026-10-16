@@ -13,8 +13,10 @@ import (
 )
 
 // registerPlanTools exposes the PlanService convenience operations over MCP.
-// Plan tasks are kind=plan; phases live at metadata.plan.phases[]; execution
-// children link via parent_id + metadata.phase_id. See docs/plans-v1.md.
+// Plan tasks are kind=plan; phases are plan_phases records (the plan tools
+// present them as plan.phases[]; the raw metadata.plan.phases on a task read is
+// a frozen legacy copy); execution children link via parent_id + phase_id
+// (setting metadata.phase_id on a child still works). See docs/plans-v1.md.
 func (a *Adapter) registerPlanTools() {
 	a.addTool(newTool("torque_plan_create",
 		withDescription(`Create a plan (kind=plan task) with optional initial phases[]. Returns the plan task plus decoded phase detail.
@@ -93,7 +95,7 @@ Example: {"plan_id":"T-999","name":"verify","acceptance":"user sign-off"}`),
 	), a.handlePlanAddPhase)
 
 	a.addTool(newTool("torque_plan_remove_phase",
-		withDescription(`Remove a phase from a plan. Rejected with error.code=conflict if any child task still references the phase via metadata.phase_id.
+		withDescription(`Remove a phase from a plan. Rejected with error.code=conflict if any child task still belongs to the phase (phase_id; set via metadata.phase_id or the plan's child tools). The phase is tombstoned and its id is never reused.
 Use to prune phases; torque_plan_add_phase to append, torque_plan_list_children to see what references a phase.
 Response shape: data = {plan_id, phase_id, removed: true}.
 Example: {"plan_id":"T-999","phase_id":"ph-2"}`),
@@ -102,7 +104,7 @@ Example: {"plan_id":"T-999","phase_id":"ph-2"}`),
 	), a.handlePlanRemovePhase)
 
 	a.addTool(newTool("torque_plan_list_children",
-		withDescription(`List tasks whose parent_id matches the plan; phase_id narrows to children of one phase via metadata.phase_id.
+		withDescription(`List tasks whose parent_id matches the plan; phase_id narrows to children of one phase (the tasks.phase_id column).
 Use to inspect per-phase execution tasks; torque_task_list with parent_id filter is the lower-level analog. Reuses the task list envelope (brief/verbose).
 Response shape: data = {items: [<briefTask or TaskRecord>...], meta: {truncated, returned, limit, has_more, next_cursor, total?, offset?, next_offset?, hint?}}.
 Example: {"plan_id":"T-999","phase_id":"ph-1"}`),

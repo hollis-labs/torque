@@ -4,24 +4,33 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
-// PlanPhase is a single phase within a plan's metadata.plan.phases[] array.
-// Phase IDs are short slugs ("ph-1", "ph-2", ...) assigned at add time. Order
-// is a monotonic int used for display and dispatch ordering. Acceptance is
-// optional free-form prose attached to the phase.
+// PlanPhase is a single phase of a plan. Phases are records in plan_phases
+// (migration 043); the plan API still presents them in the metadata.plan.phases
+// shape. Phase IDs are short slugs ("ph-1", "ph-2", ...) assigned at add time
+// and never reused, even after the phase is removed. Order is a monotonic int
+// used for display and dispatch ordering. Acceptance is optional free-form
+// prose attached to the phase. State is pending | started | completed and
+// Generation is the lifecycle generation (1 until a completed phase is
+// reopened).
 type PlanPhase struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	Order      int    `json:"order"`
 	Acceptance string `json:"acceptance,omitempty"`
+	State      string `json:"state,omitempty"`
+	Generation int    `json:"lifecycle_generation,omitempty"`
 }
 
-// PlanMetadata is the versioned container stored at task.metadata.plan for
-// kind=plan tasks. Version lets v2 migrate the shape without a one-way break.
+// PlanMetadata is the compatibility projection of a plan's phase records, in
+// the shape that used to be stored at task.metadata.plan. It is built on read;
+// nothing writes it back. Version lets v2 migrate the shape without a
+// one-way break.
 type PlanMetadata struct {
 	Version int         `json:"version"`
 	Phases  []PlanPhase `json:"phases"`
@@ -88,7 +97,7 @@ type PlanDetail struct {
 }
 
 // PlanService wraps TaskService with plan-specific conveniences. Plans are
-// stored as kind=plan tasks; phase metadata lives in task.metadata.plan.
+// stored as kind=plan tasks; their phases are plan_phases records.
 type PlanService struct {
 	store    *sqlstore.Store
 	tasks    *TaskService
@@ -109,22 +118,15 @@ func (s *PlanService) Create(input PlanCreateInput) (*sqlstore.TaskRecord, error
 		return nil, &ValidationError{Field: "title", Message: "title is required"}
 	}
 
-	meta := PlanMetadata{Version: 1}
-	for i, ph := range input.Phases {
+	var phases []sqlstore.PlanPhaseInput
+	for _, ph := range input.Phases {
 		if ph.Name == "" {
 			continue
 		}
-		meta.Phases = append(meta.Phases, PlanPhase{
-			ID:         fmt.Sprintf("ph-%d", len(meta.Phases)+1),
-			Name:       ph.Name,
-			Order:      i + 1,
-			Acceptance: ph.Acceptance,
-		})
+		phases = append(phases, sqlstore.PlanPhaseInput{Name: ph.Name, Acceptance: ph.Acceptance})
 	}
 
-	metadataMap := map[string]any{"plan": meta}
-
-	return s.tasks.Create(TaskCreateInput{
+	task, err := s.tasks.Create(TaskCreateInput{
 		Title:       input.Title,
 		Description: input.Description,
 		Priority:    input.Priority,
@@ -134,8 +136,26 @@ func (s *PlanService) Create(input PlanCreateInput) (*sqlstore.TaskRecord, error
 		EpicID:      input.EpicID,
 		Kind:        "plan",
 		Manual:      true,
-		Metadata:    metadataMap,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if len(phases) > 0 {
+		if _, err := s.store.AddPlanPhases(context.Background(), task.ID, phases); err != nil {
+			// The task and its phases are two writes (TaskService.Create owns the
+			// task's validation, id and tags), so undo the first rather than
+			// leave a plan with no phases.
+			if delErr := s.tasks.Delete(task.ID); delErr != nil {
+				return nil, fmt.Errorf("plan %s created but its phases were not (%v), and removing it failed: %w", task.ID, err, delErr)
+			}
+			return nil, fmt.Errorf("create plan phases: %w", err)
+		}
+	}
+	// Return the task as a reader sees it, with the phase projection applied.
+	if _, err := s.loadPlan(task); err != nil {
+		return nil, err
+	}
+	return task, nil
 }
 
 // Get returns the plan task, decoded metadata, and progress roll-up.
@@ -147,7 +167,7 @@ func (s *PlanService) Get(planID string) (*PlanDetail, error) {
 	if task.Kind != "plan" {
 		return nil, &ValidationError{Field: "kind", Message: "task " + planID + " is not a plan"}
 	}
-	plan, err := decodePlan(task)
+	plan, err := s.loadPlan(task)
 	if err != nil {
 		return nil, err
 	}
@@ -230,101 +250,58 @@ func (s *PlanService) Delete(id string) error {
 	return s.tasks.Delete(id)
 }
 
-// AddPhase appends a phase to metadata.plan.phases with an auto-generated id
-// and a monotonic order. Returns the new phase id.
+// AddPhase appends a phase to the plan with an auto-generated id and a
+// monotonic order. Returns the new phase id.
 func (s *PlanService) AddPhase(planID, name, acceptance string) (string, error) {
 	if name == "" {
 		return "", &ValidationError{Field: "name", Message: "phase name is required"}
 	}
-
-	task, err := s.tasks.Get(planID)
+	if _, err := s.requirePlan(planID); err != nil {
+		return "", err
+	}
+	added, err := s.store.AddPlanPhases(context.Background(), planID, []sqlstore.PlanPhaseInput{{Name: name, Acceptance: acceptance}})
 	if err != nil {
 		return "", err
 	}
-	if task.Kind != "plan" {
-		return "", &ValidationError{Field: "kind", Message: "task " + planID + " is not a plan"}
-	}
-
-	plan, err := decodePlan(task)
-	if err != nil {
-		return "", err
-	}
-
-	phaseID := nextPhaseID(plan.Phases)
-	order := nextPhaseOrder(plan.Phases)
-	plan.Phases = append(plan.Phases, PlanPhase{
-		ID:         phaseID,
-		Name:       name,
-		Order:      order,
-		Acceptance: acceptance,
-	})
-
-	if err := s.writePlanMetadata(task, plan); err != nil {
-		return "", err
-	}
+	ph := added[0]
 	if s.observer != nil {
 		s.observer.ObservePlanPhase(context.Background(), PlanPhaseEvent{
 			Kind:      "added",
 			PlanID:    planID,
-			PhaseID:   phaseID,
+			PhaseID:   ph.PhaseID,
 			PhaseName: name,
-			Order:     order,
+			Order:     ph.Order,
 		})
 	}
-	return phaseID, nil
+	return ph.PhaseID, nil
 }
 
 // RemovePhase removes a phase from the plan. Fails when any child task still
-// references the phase via metadata.phase_id — child tasks must be reassigned
-// or deleted first.
+// belongs to the phase — child tasks must be reassigned or deleted first. The
+// phase row is kept as a tombstone so its id is not issued again.
 func (s *PlanService) RemovePhase(planID, phaseID string) error {
 	if phaseID == "" {
 		return &ValidationError{Field: "phase_id", Message: "phase_id is required"}
 	}
-
-	task, err := s.tasks.Get(planID)
-	if err != nil {
+	if _, err := s.requirePlan(planID); err != nil {
 		return err
 	}
-	if task.Kind != "plan" {
-		return &ValidationError{Field: "kind", Message: "task " + planID + " is not a plan"}
-	}
-
-	children, err := s.ListChildren(planID, phaseID)
-	if err != nil {
-		return err
-	}
-	if len(children) > 0 {
-		// ConflictError (not ValidationError): this is a state-dependent
-		// rejection — the phase_id argument itself is well-formed, it's the
-		// current DB state (children still referencing it) that blocks the
-		// op. torque_plan_remove_phase's docstring documents
-		// error.code=conflict for exactly this case; ValidationError would
-		// map to arg_invalid instead (mcpadapter.mapServiceError), breaking
-		// that contract.
-		return &ConflictError{
-			Message: fmt.Sprintf("cannot remove phase %s: %d child task(s) still reference it", phaseID, len(children)),
+	if err := s.store.RemovePlanPhase(context.Background(), planID, phaseID); err != nil {
+		switch {
+		case errors.Is(err, sqlstore.ErrPhaseInUse):
+			// ConflictError (not ValidationError): this is a state-dependent
+			// rejection — the phase_id argument itself is well-formed, it's the
+			// current DB state (children still in the phase) that blocks the
+			// op. torque_plan_remove_phase's docstring documents
+			// error.code=conflict for exactly this case; ValidationError would
+			// map to arg_invalid instead (mcpadapter.mapServiceError), breaking
+			// that contract.
+			var inUse *sqlstore.PhaseInUseError
+			errors.As(err, &inUse)
+			return &ConflictError{Message: fmt.Sprintf("cannot remove phase %s: %d child task(s) still reference it", phaseID, inUse.Members)}
+		case errors.Is(err, sqlstore.ErrPhaseNotFound):
+			return &ValidationError{Field: "phase_id", Message: "phase not found: " + phaseID}
 		}
-	}
-
-	plan, err := decodePlan(task)
-	if err != nil {
-		return err
-	}
-	filtered := plan.Phases[:0]
-	found := false
-	for _, ph := range plan.Phases {
-		if ph.ID == phaseID {
-			found = true
-			continue
-		}
-		filtered = append(filtered, ph)
-	}
-	if !found {
-		return &ValidationError{Field: "phase_id", Message: "phase not found: " + phaseID}
-	}
-	plan.Phases = filtered
-	if err := s.writePlanMetadata(task, plan); err != nil {
 		return err
 	}
 	if s.observer != nil {
@@ -340,20 +317,7 @@ func (s *PlanService) RemovePhase(planID, phaseID string) error {
 // ListChildren returns tasks whose parent_id = planID, optionally narrowed to
 // a specific phase_id. Pass empty phaseID to return all children.
 func (s *PlanService) ListChildren(planID, phaseID string) ([]sqlstore.TaskRecord, error) {
-	children, err := s.tasks.List(sqlstore.TaskFilter{ParentID: planID})
-	if err != nil {
-		return nil, err
-	}
-	if phaseID == "" {
-		return children, nil
-	}
-	out := make([]sqlstore.TaskRecord, 0, len(children))
-	for _, c := range children {
-		if childPhaseID(c) == phaseID {
-			out = append(out, c)
-		}
-	}
-	return out, nil
+	return s.tasks.List(sqlstore.TaskFilter{ParentID: planID, PhaseID: phaseID})
 }
 
 // Progress returns the roll-up without the full plan payload. Callers that
@@ -366,7 +330,7 @@ func (s *PlanService) Progress(planID string) (PlanProgress, error) {
 	if task.Kind != "plan" {
 		return PlanProgress{}, &ValidationError{Field: "kind", Message: "task " + planID + " is not a plan"}
 	}
-	plan, err := decodePlan(task)
+	plan, err := s.loadPlan(task)
 	if err != nil {
 		return PlanProgress{}, err
 	}
@@ -390,7 +354,7 @@ func (s *PlanService) progress(planID string, plan PlanMetadata) (PlanProgress, 
 		if c.Status == "blocked" {
 			out.Blocked++
 		}
-		pid := childPhaseID(c)
+		pid := c.PhaseID.String
 		roll := by[pid]
 		roll.Total++
 		if c.Status == "done" {
@@ -405,87 +369,43 @@ func (s *PlanService) progress(planID string, plan PlanMetadata) (PlanProgress, 
 	return out, nil
 }
 
-// writePlanMetadata re-serializes the metadata map with the updated plan
-// block and pushes it through TaskService.Update so validation still runs.
-func (s *PlanService) writePlanMetadata(task *sqlstore.TaskRecord, plan PlanMetadata) error {
-	metadata := map[string]any{}
-	if task.Metadata.Valid && task.Metadata.String != "" {
-		_ = json.Unmarshal([]byte(task.Metadata.String), &metadata)
-	}
-	metadata["plan"] = plan
-	raw, err := json.Marshal(metadata)
-	if err != nil {
-		return err
-	}
-	update := sqlstore.TaskUpdate{
-		Metadata: &sql.NullString{String: string(raw), Valid: true},
-	}
-	return s.tasks.Update(task.ID, TaskUpdateInput{TaskUpdate: update})
-}
-
-// decodePlan extracts metadata.plan from a task record, returning an empty
-// plan (version=1, no phases) when the task has no plan block.
-func decodePlan(task *sqlstore.TaskRecord) (PlanMetadata, error) {
+// loadPlan builds the compatibility projection from the plan's phase records
+// and overlays it on the task's metadata.plan, so a reader of Task.Metadata
+// sees the same phases as Plan. Other keys under metadata.plan (the
+// orchestrator session, for one) are left as they are.
+func (s *PlanService) loadPlan(task *sqlstore.TaskRecord) (PlanMetadata, error) {
 	plan := PlanMetadata{Version: 1}
-	if !task.Metadata.Valid || task.Metadata.String == "" {
-		return plan, nil
+	recs, err := s.store.ListPlanPhases(task.ID, false)
+	if err != nil {
+		return plan, err
 	}
-	var metadata map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(task.Metadata.String), &metadata); err != nil {
-		return plan, fmt.Errorf("decode task metadata: %w", err)
+	for _, r := range recs {
+		plan.Phases = append(plan.Phases, PlanPhase{
+			ID: r.PhaseID, Name: r.Name, Order: r.Order, Acceptance: r.Acceptance,
+			State: r.State, Generation: r.Generation,
+		})
 	}
-	raw, ok := metadata["plan"]
-	if !ok {
-		return plan, nil
+	root := map[string]any{}
+	if task.Metadata.Valid && task.Metadata.String != "" {
+		if err := json.Unmarshal([]byte(task.Metadata.String), &root); err != nil {
+			return plan, fmt.Errorf("decode task metadata: %w", err)
+		}
 	}
-	if err := json.Unmarshal(raw, &plan); err != nil {
-		return plan, fmt.Errorf("decode plan metadata: %w", err)
+	ns, _ := root["plan"].(map[string]any)
+	if ns == nil {
+		ns = map[string]any{}
 	}
-	if plan.Version == 0 {
-		plan.Version = 1
+	ns["version"] = plan.Version
+	if plan.Phases == nil {
+		ns["phases"] = []PlanPhase{}
+	} else {
+		ns["phases"] = plan.Phases
 	}
+	root["plan"] = ns
+	raw, err := json.Marshal(root)
+	if err != nil {
+		return plan, err
+	}
+	task.Metadata = sql.NullString{String: string(raw), Valid: true}
 	return plan, nil
-}
-
-// childPhaseID reads metadata.phase_id from a child task, returning "" when
-// the child is not phase-tagged.
-func childPhaseID(task sqlstore.TaskRecord) string {
-	if !task.Metadata.Valid || task.Metadata.String == "" {
-		return ""
-	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(task.Metadata.String), &m); err != nil {
-		return ""
-	}
-	v, _ := m["phase_id"].(string)
-	return v
-}
-
-// nextPhaseID generates a short slug id for a new phase. Uses the next free
-// integer suffix to stay human-readable; skips any already-taken ids to keep
-// ids unique across the plan's lifetime.
-func nextPhaseID(phases []PlanPhase) string {
-	taken := map[string]bool{}
-	for _, ph := range phases {
-		taken[ph.ID] = true
-	}
-	for i := 1; i < 1000; i++ {
-		id := fmt.Sprintf("ph-%d", i)
-		if !taken[id] {
-			return id
-		}
-	}
-	return fmt.Sprintf("ph-%d", len(phases)+1)
-}
-
-// nextPhaseOrder returns one past the current max order, so new phases land
-// at the end of the display order.
-func nextPhaseOrder(phases []PlanPhase) int {
-	max := 0
-	for _, ph := range phases {
-		if ph.Order > max {
-			max = ph.Order
-		}
-	}
-	return max + 1
 }

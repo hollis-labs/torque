@@ -206,6 +206,11 @@ type TaskRecord struct {
 	// Parent linkage (migration 013). NULL = top of lineage.
 	ParentID sql.NullString
 
+	// PhaseID (migration 043) names the live phase of the parent plan this
+	// task belongs to. NULL = not in a phase. Database triggers hold it to a
+	// phase of ParentID, so it is only valid together with a plan parent.
+	PhaseID sql.NullString
+
 	// Collection columns (migration 020). All three are managed by the
 	// Collections store (collections.go) — task-layer code reads these but
 	// does not write them through TaskUpdate. CollectionID NULL means the
@@ -262,6 +267,9 @@ type TaskFilter struct {
 	// matches. Use ParentIDNull=true to return root tasks (parent_id IS NULL).
 	ParentID     string
 	ParentIDNull bool
+	// PhaseID narrows to members of one plan phase (migration 043). Only
+	// meaningful with ParentID, since phase ids are per plan.
+	PhaseID string
 
 	// Manual-flag filter. Nil = no filter; otherwise matches manual=0/1.
 	Manual *bool
@@ -417,6 +425,11 @@ type TaskUpdate struct {
 	// use a NullString with Valid=false to clear (set to NULL).
 	ParentID *sql.NullString
 
+	// PhaseID (migration 043). Non-nil pointer writes the column; a NullString
+	// with Valid=false clears it. Must name a live phase of the (resulting)
+	// parent plan or the write is rejected with ErrInvalidPhase.
+	PhaseID *sql.NullString
+
 	// depends_on (migration 027 / FK-003) is not a column here — it's
 	// managed via SetTaskDependencies (task_dependencies.go), same shape as
 	// Tags in service.TaskUpdateInput.
@@ -467,7 +480,7 @@ const taskSelectCols = `id, title, description, status, priority, manual,
 	deliverable_preset, on_done_merge, blocked_reason, metadata,
 	sprint_id, project_id, epic_id, created_at, updated_at,
 	kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
-	parent_id,
+	parent_id, phase_id,
 	collection_id, collection_position, added_to_collections_at, progress_detail, progress_detail_source`
 
 // scanTask scans a single row into a TaskRecord.
@@ -484,7 +497,7 @@ func scanTask(row interface {
 		&t.DeliverablePreset, &t.OnDoneMerge, &t.BlockedReason, &t.Metadata,
 		&t.SprintID, &t.ProjectID, &t.EpicID, &t.CreatedAt, &t.UpdatedAt,
 		&t.Kind, &t.SourceType, &t.SourceRef, &t.Trust, &t.CheckpointMode, &t.OnCheckpointResponse,
-		&t.ParentID,
+		&t.ParentID, &t.PhaseID,
 		&t.CollectionID, &t.CollectionPosition, &t.AddedToCollectionsAt, &t.ProgressDetail, &t.ProgressDetailSource,
 	)
 	if err != nil {
@@ -514,8 +527,8 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 		deliverable_preset, on_done_merge, blocked_reason, metadata,
 		sprint_id, project_id, epic_id,
 		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
-		parent_id, progress_detail, progress_detail_source
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+		parent_id, phase_id, progress_detail, progress_detail_source
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := s.db.Exec(q,
 		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
@@ -525,9 +538,9 @@ func (s *Store) CreateTask(t *TaskRecord) error {
 		t.DeliverablePreset, t.OnDoneMerge, t.BlockedReason, t.Metadata,
 		t.SprintID, t.ProjectID, t.EpicID,
 		t.Kind, t.SourceType, t.SourceRef, t.Trust, t.CheckpointMode, t.OnCheckpointResponse,
-		t.ParentID, t.ProgressDetail, t.ProgressDetailSource,
+		t.ParentID, t.PhaseID, t.ProgressDetail, t.ProgressDetailSource,
 	)
-	return err
+	return phaseWriteErr(err)
 }
 
 // GetTask fetches a single task by ID. Returns an error wrapping
@@ -964,6 +977,10 @@ func (s *Store) taskListPredicates(f TaskFilter) ([]string, []any, error) {
 		where = append(where, "parent_id = ?")
 		args = append(args, f.ParentID)
 	}
+	if f.PhaseID != "" {
+		where = append(where, "phase_id = ?")
+		args = append(args, f.PhaseID)
+	}
 	if f.Manual != nil {
 		v := 0
 		if *f.Manual {
@@ -1392,6 +1409,10 @@ func updateTaskExec(ex dbExecer, id string, u TaskUpdate) error {
 		setClauses = append(setClauses, "parent_id = ?")
 		args = append(args, *u.ParentID)
 	}
+	if u.PhaseID != nil {
+		setClauses = append(setClauses, "phase_id = ?")
+		args = append(args, *u.PhaseID)
+	}
 
 	// Always update updated_at
 	setClauses = append(setClauses, "updated_at = ?")
@@ -1401,7 +1422,7 @@ func updateTaskExec(ex dbExecer, id string, u TaskUpdate) error {
 	q := `UPDATE tasks SET ` + strings.Join(setClauses, ", ") + ` WHERE id = ?`
 	res, err := ex.Exec(q, args...)
 	if err != nil {
-		return err
+		return phaseWriteErr(err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

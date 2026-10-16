@@ -640,8 +640,8 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 		deliverable_preset, on_done_merge, blocked_reason, metadata,
 		sprint_id, project_id, epic_id,
 		kind, source_type, source_ref, trust, checkpoint_mode, on_checkpoint_response,
-		parent_id, progress_detail, progress_detail_source
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+		parent_id, phase_id, progress_detail, progress_detail_source
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
 
 	_, err := w.tx.Exec(q,
 		t.ID, t.Title, t.Description, t.Status, t.Priority, manual,
@@ -651,9 +651,9 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 		t.DeliverablePreset, t.OnDoneMerge, t.BlockedReason, t.Metadata,
 		t.SprintID, t.ProjectID, t.EpicID,
 		t.Kind, t.SourceType, t.SourceRef, t.Trust, t.CheckpointMode, t.OnCheckpointResponse,
-		t.ParentID, t.ProgressDetail, t.ProgressDetailSource,
+		t.ParentID, t.PhaseID, t.ProgressDetail, t.ProgressDetailSource,
 	)
-	return err
+	return phaseWriteErr(err)
 }
 
 // UpdateTask applies non-nil pointer fields to the task row inside the write

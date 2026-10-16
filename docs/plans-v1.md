@@ -3,8 +3,8 @@
 Plans are a coordination task type (`kind=plan`) that group a set of phase-scoped
 execution children under a single parent task. A plan never dispatches — the
 scheduler's picker skips `kind=plan` rows alongside `kind=parent`. Phases are
-stored inline on the plan task's metadata; child tasks link back via
-`parent_id` plus a `metadata.phase_id` tag.
+records in `plan_phases` (migration 043); child tasks link back via `parent_id`
+plus the `tasks.phase_id` column.
 
 ## Data model
 
@@ -13,27 +13,43 @@ tasks
   id        = CW-...
   kind      = plan
   manual    = true            -- plans never auto-dispatch
-  metadata  = {"plan": {"version": 1, "phases": [...]}}
+
+plan_phases                   -- one row per (plan_id, phase_id)
+  name, display_order, acceptance
+  state                = pending | started | completed
+  lifecycle_generation = 1, bumped when a completed phase is reopened
+  started_at, completed_at, revision
+  deleted_at                  -- tombstone; the row is kept
 
   +-- child tasks (kind=agent|external|...):
         parent_id = <plan-id>
-        metadata  = {"phase_id": "ph-1", ...}
+        phase_id  = "ph-1"    -- must name a live phase of parent_id
 ```
 
-A plan's `metadata.plan.phases[]` is an ordered array of `{id, name, order, acceptance?}`.
 Phase IDs are short slugs (`ph-1`, `ph-2`, ...) generated at add time and never
-reused. Order is monotonic; the PlanService keeps it in sync on add.
+reused: a removed phase is tombstoned, and new ids are allocated above every
+suffix the plan has issued. `tasks.phase_id` is held to the parent plan's live
+phases by database triggers, so every write path is covered.
+
+Existing callers keep working. A child created or updated under a plan with
+`metadata.phase_id` has that value recorded in `phase_id` (rejected if the plan
+has no such phase), and `Get` still returns `{id, name, order, acceptance?}`
+phases at `plan.phases` and `task.metadata.plan.phases`, now built from the
+records with `state` and `lifecycle_generation` added. Nothing writes
+`metadata.plan.phases` any more: on a raw task read (`task_get`, `task_list`, `plan_list`) it is a frozen legacy copy, left in place so a code revert still has the old data; only the plan endpoints overlay the records. Migration 043 backfilled phases and memberships
+from the old metadata; a child naming a phase its plan does not have was not
+given one and is listed in `plan_phase_repairs`.
 
 ## Service surface
 
 `service.PlanService` wraps the ordinary `TaskService` with the following
 conveniences:
 
-- `Create(input)` — builds a `kind=plan` task, prefills `metadata.plan`.
+- `Create(input)` — builds a `kind=plan` task and its phase records.
 - `Get(planID)` — decodes the plan + returns a child roll-up.
 - `AddPhase(planID, name, acceptance)` — appends a phase, returns the new id.
-- `RemovePhase(planID, phaseID)` — removes a phase. Rejected if any child
-  still references `phaseID` via `metadata.phase_id`.
+- `RemovePhase(planID, phaseID)` — removes (tombstones) a phase. Rejected if any
+  child still belongs to `phaseID`.
 - `ListChildren(planID, phaseID?)` — lists children of the plan, optionally
   narrowed by phase.
 - `Progress(planID)` — totals + per-phase done/blocked counts.

@@ -37,7 +37,7 @@ func TestMigration036PopulatedPostgres(t *testing.T) {
 	_, err := db.Exec(`CREATE TABLE schema_migrations(version TEXT PRIMARY KEY,applied_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP);
  CREATE TABLE epics(id TEXT PRIMARY KEY);
  CREATE TABLE sprints(id TEXT PRIMARY KEY,name TEXT,goal TEXT,status TEXT,approval_mode TEXT,project_id TEXT,cost_budget REAL);
- CREATE TABLE tasks(id TEXT PRIMARY KEY,title TEXT,sprint_id TEXT REFERENCES sprints(id));
+ CREATE TABLE tasks(id TEXT PRIMARY KEY,title TEXT,sprint_id TEXT REFERENCES sprints(id),kind TEXT,status TEXT,parent_id TEXT,metadata TEXT);
  CREATE TABLE task_templates(id TEXT PRIMARY KEY,version INTEGER);
  CREATE TABLE sessions(id TEXT PRIMARY KEY);
  CREATE TABLE runs(id SERIAL PRIMARY KEY,task_id TEXT REFERENCES tasks(id));

@@ -93,7 +93,7 @@ func verify035Upgrade(t *testing.T, db *sql.DB, placeholder string) {
 
 func TestMigration035PostgresFailureRollsBack(t *testing.T) {
 	db := postgresMigrationFixture(t)
-	_, err := db.Exec(`CREATE TABLE tasks (id TEXT PRIMARY KEY, priority INTEGER, status TEXT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ);
+	_, err := db.Exec(`CREATE TABLE tasks (id TEXT PRIMARY KEY, priority INTEGER, status TEXT, kind TEXT, parent_id TEXT, metadata TEXT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ);
 		CREATE TABLE schema_migrations (version TEXT PRIMARY KEY);
 		INSERT INTO tasks (id,priority) VALUES ('T35',2);`)
 	require.NoError(t, err)
@@ -126,7 +126,7 @@ func populatedPostgresThrough034(t *testing.T) *sql.DB {
  CREATE TABLE projects (id TEXT PRIMARY KEY,name TEXT,status TEXT,created_at TIMESTAMPTZ,updated_at TIMESTAMPTZ,archived_at TIMESTAMPTZ);
  CREATE TABLE epics (id TEXT PRIMARY KEY,name TEXT,status TEXT,project_id TEXT,created_at TIMESTAMPTZ,updated_at TIMESTAMPTZ,archived_at TIMESTAMPTZ);
  CREATE TABLE sprints (id TEXT PRIMARY KEY,name TEXT,status TEXT,project_id TEXT,created_at TIMESTAMPTZ,updated_at TIMESTAMPTZ,archived_at TIMESTAMPTZ);
- CREATE TABLE tasks (id TEXT PRIMARY KEY,title TEXT,status TEXT,priority INTEGER,kind TEXT,project_id TEXT REFERENCES projects(id),epic_id TEXT REFERENCES epics(id),sprint_id TEXT REFERENCES sprints(id),parent_id TEXT REFERENCES tasks(id),collection_id TEXT,collection_position INTEGER,created_at TIMESTAMPTZ,updated_at TIMESTAMPTZ);
+ CREATE TABLE tasks (id TEXT PRIMARY KEY,title TEXT,status TEXT,priority INTEGER,kind TEXT,metadata TEXT,project_id TEXT REFERENCES projects(id),epic_id TEXT REFERENCES epics(id),sprint_id TEXT REFERENCES sprints(id),parent_id TEXT REFERENCES tasks(id),collection_id TEXT,collection_position INTEGER,created_at TIMESTAMPTZ,updated_at TIMESTAMPTZ);
  CREATE TABLE runs (id BIGINT PRIMARY KEY,task_id TEXT REFERENCES tasks(id),status TEXT,started_at TIMESTAMPTZ,ended_at TIMESTAMPTZ,cost REAL);
  CREATE TABLE cost_ledger (id BIGSERIAL PRIMARY KEY,task_id TEXT REFERENCES tasks(id),run_id BIGINT REFERENCES runs(id),cost REAL);
  CREATE TABLE artifacts (id BIGINT PRIMARY KEY,task_id TEXT REFERENCES tasks(id),type TEXT,content TEXT,created_at TIMESTAMPTZ);
