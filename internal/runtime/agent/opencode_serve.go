@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/hollis-labs/libs/harness/core/adapters/provider"
-	gopermission "github.com/hollis-labs/libs/security/policy/permission"
 	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
+	gopermission "github.com/hollis-labs/libs/security/policy/permission"
 
 	"github.com/hollis-labs/torque/internal/config"
 )

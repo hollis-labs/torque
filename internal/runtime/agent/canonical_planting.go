@@ -14,11 +14,11 @@ import (
 	"github.com/hollis-labs/libs/harness/core/adapters/registry"
 	"github.com/hollis-labs/libs/harness/core/agentlaunch"
 	providerplant "github.com/hollis-labs/libs/harness/core/agentlaunch/planting"
-	"github.com/hollis-labs/libs/security/policy/permission"
 	"github.com/hollis-labs/libs/harness/core/workspace/materialize"
 	"github.com/hollis-labs/libs/harness/core/workspace/materialize/artifact"
 	"github.com/hollis-labs/libs/harness/core/workspace/render"
 	"github.com/hollis-labs/libs/llm/core/contracts/runtimes"
+	"github.com/hollis-labs/libs/security/policy/permission"
 )
 
 // plantCanonicalArtifacts retains the supported projection's launch bindings,
