@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { PageHeader } from '@hollis-labs/sysop-ui'
 import {
   ActivityHeatmap,
@@ -11,7 +12,7 @@ import {
 } from '@/components/widgets'
 import { useApi } from '@/hooks/use-api'
 import { usePagedList } from '@/hooks/use-paged-list'
-import { ConsoleProvider, ConsoleDebugPanel, FixtureSource } from '@/console'
+import { ConsoleProvider, ConsoleDebugPanel, FixtureSource, AlertBadge, AlertListItem, AlertToast, sampleAlerts } from '@/console'
 import { CardsPreview } from '@/console/cards/CardsPreview'
 import { HitlPreview } from '@/console/hitl/HitlPreview'
 import { WorkflowPreview } from '@/console/workflow/WorkflowPreview'
@@ -22,6 +23,8 @@ const consoleFixture = new FixtureSource()
 
 export default function WidgetPreviewPage() {
   const api = useApi()
+  const [alertNow] = useState(() => Date.now())
+  const alertSamples = sampleAlerts(alertNow)
   const taskPage = usePagedList({
     params: { limit: 50, sort_by: 'updated_at' as const, sort_dir: 'desc' as const, include_total: true },
     fetchPage: ({ params, cursor, signal }) => api.listTaskPage({ ...params, cursor }, signal),
@@ -49,6 +52,29 @@ export default function WidgetPreviewPage() {
           <ConsoleProvider source={consoleFixture}>
             <ConsoleDebugPanel />
           </ConsoleProvider>
+        </section>
+
+        <section className="rounded border border-border/60 bg-card/40 p-4">
+          <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            Alerts (static samples)
+          </h2>
+          <div className="grid gap-6 md:grid-cols-2">
+            <div className="flex flex-col gap-2">
+              {alertSamples.map((a) => (
+                <AlertToast key={a.id} alert={a} now={alertNow} durationMs={null} onClose={() => undefined} />
+              ))}
+            </div>
+            <div>
+              <div className="mb-2 flex items-center gap-2 font-mono text-xs text-muted-foreground">
+                Badge: <AlertBadge count={3} severity="warning" /> <AlertBadge count={120} severity="error" />
+              </div>
+              <ul className="border border-zinc-800">
+                {alertSamples.map((a, i) => (
+                  <AlertListItem key={a.id} alert={a} status={i > 3 ? 'read' : 'unread'} now={alertNow} onDismiss={() => undefined} onSnooze={() => undefined} />
+                ))}
+              </ul>
+            </div>
+          </div>
         </section>
 
         <section className="rounded border border-border/60 bg-card/40 p-4">
