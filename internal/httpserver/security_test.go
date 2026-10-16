@@ -239,6 +239,10 @@ func TestGuardJWT_VerifiedTokenAdmittedUnderLegacyTokenAndEnforce(t *testing.T) 
 		bearer := func(tok string) map[string]string { return map[string]string{"Authorization": "Bearer " + tok} }
 		assert.Equal(t, http.StatusOK, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(mint("torque", "torque.read"))).StatusCode, mode)
 		assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(mint("tesseract", "torque.read"))).StatusCode, mode)
+		if mode == auth.ModeOff {
+			// Under-scoped JWT must not bypass the legacy token gate.
+			assert.Equal(t, http.StatusUnauthorized, do(t, "POST", ts.URL+"/api/v1/tasks", bearer(mint("torque", "torque.read"))).StatusCode)
+		}
 		if mode == auth.ModeEnforce {
 			assert.Equal(t, http.StatusForbidden, do(t, "POST", ts.URL+"/api/v1/tasks", bearer(mint("torque", "torque.read"))).StatusCode)
 		}

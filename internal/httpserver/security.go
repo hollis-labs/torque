@@ -132,7 +132,10 @@ func (s *Server) requireToken(next http.Handler) http.Handler {
 			// unless the guard is enforcing, in which case it has already
 			// rejected them.
 			guarded = g.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if auth.Verified(r.Context()) {
+				// Off and permissive stamp an under-scoped verified caller
+				// without rejecting it, so admission also needs the scope
+				// this method requires; otherwise the legacy rules decide.
+				if p, ok := auth.FromContext(r.Context()); ok && p.Verified && p.HasScope(requiredScope(r.Method)) {
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -174,4 +177,12 @@ func requestHostname(r *http.Request) string {
 		return host
 	}
 	return r.Host
+}
+
+// requiredScope is the scope scopeTable demands for method.
+func requiredScope(method string) string {
+	if method == http.MethodGet || method == http.MethodHead {
+		return AuthApp + ".read"
+	}
+	return AuthApp + ".write"
 }
