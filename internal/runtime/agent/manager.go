@@ -924,6 +924,10 @@ func (m *Manager) reconcileInterruptedRun(ctx context.Context, sess *sqlstore.Se
 			return nil
 		}
 		changed = true
+		if err := tx.RecordRunStateChange(runID, taskID.String, sqlstore.RunStatusRunning, sqlstore.RunStatusKilled, reason,
+			sqlstore.Trigger{Kind: sqlstore.TriggerSystem, Ref: "agent.reconcile"}); err != nil {
+			return err
+		}
 		_, err = tx.AppendRunEvent(&sqlstore.RunEventRecord{
 			RunID:   sql.NullInt64{Int64: runID, Valid: true},
 			TaskID:  taskID.String,

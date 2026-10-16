@@ -54,8 +54,15 @@ non-forced transition to the status the task already has writes no event. The ev
 (the GUI sends it on every request), and anything else over HTTP is `agent`.
 Who the caller is goes only in the event's `actor` block. The
 other frames on the stream (CRUD pings, scheduler run events) are best effort
-and carry no id. The reader is SQLite-only for now: on Postgres `/events` carries no task
-transitions (the events are still written).
+and carry no id. Run and checkpoint changes are durable events too: a run
+change is a `run.state_changed` frame; a checkpoint change keeps the
+`checkpoint.emitted` / `.responded` / `.canceled` names (`timed_out` is
+`checkpoint.state_changed`) with `correlation_id` and `task_id`. A checkpoint
+timeout also reaches `/events` as the scheduler's `checkpoint.timed_out` frame,
+which carries no id; the durable one is the `checkpoint.state_changed` frame. The
+reader is
+SQLite-only for now: on Postgres `/events` carries no task transitions (the
+events are still written).
 
 **Restoring a database.** The `<generation>` in an event id is the log's
 restart counter. A fresh log gets a random one at startup. When you restore

@@ -1522,7 +1522,7 @@ func (s *Store) ParkTaskOnCheckpointRef(ctx context.Context, id, reason, ref str
 		From:       "doing",
 		To:         "review",
 		Reason:     reason,
-		Trigger:    Trigger{Kind: TriggerSystem, Ref: ref},
+		Trigger:    TriggerWithRef(ctx, ref),
 		Scope:      stateScope{ProjectID: project.String, EpicID: epic.String, SprintID: sprint.String, TaskID: id},
 	}); err != nil {
 		return false, err

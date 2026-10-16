@@ -78,3 +78,39 @@ func TestHTTPTrigger_GUIMarkerMakesAStateChangeHuman(t *testing.T) {
 	assert.Equal(t, "human", kind)
 	assert.Equal(t, "http:POST /tasks/bulk-transition", ref)
 }
+
+// A checkpoint emitted over HTTP records who emitted it, on both rows it
+// writes: the checkpoint's own pending event and the task's doing -> review
+// park. The kind follows the surface (marked GUI request = human, unmarked =
+// agent). If the emit path fell back to a Background context both would read
+// system, which this catches.
+func TestHTTPTrigger_CheckpointEmitRecordsTheCallerOnCheckpointAndPark(t *testing.T) {
+	ts, store := triggerServer(t)
+	mk := func(id string) {
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+			ID: id, Title: id, Priority: 2, Kind: "decision", Status: "doing",
+			CheckpointMode: "blocking", OnCheckpointResponse: "resume", Manual: true,
+			OnDone: "review", OnFail: "retry", OnReview: "pause", OnDoneMerge: "none", SourceType: "user", Trust: "normal",
+		}))
+	}
+	mk("CW-HT-CP-1")
+	mk("CW-HT-CP-2")
+
+	kinds := func(task string) (checkpoint, park string) {
+		require.NoError(t, store.DB().QueryRow(
+			`SELECT trigger_kind FROM event_outbox WHERE task_id = ? AND entity_type = 'checkpoint' ORDER BY seq DESC LIMIT 1`, task).Scan(&checkpoint))
+		require.NoError(t, store.DB().QueryRow(
+			`SELECT trigger_kind FROM event_outbox WHERE task_id = ? AND entity_type = 'task' ORDER BY seq DESC LIMIT 1`, task).Scan(&park))
+		return
+	}
+
+	post(t, ts.URL+"/api/v1/checkpoints", `{"task_id":"CW-HT-CP-1","type":"approval","payload_json":"{}"}`, map[string]string{"X-Client": "browser"})
+	cp, park := kinds("CW-HT-CP-1")
+	assert.Equal(t, "human", cp, "a marked GUI emit is human on the checkpoint event")
+	assert.Equal(t, "human", park, "and on the park it causes")
+
+	post(t, ts.URL+"/api/v1/checkpoints", `{"task_id":"CW-HT-CP-2","type":"approval","payload_json":"{}"}`, nil)
+	cp, park = kinds("CW-HT-CP-2")
+	assert.Equal(t, "agent", cp, "an unmarked API emit is agent")
+	assert.Equal(t, "agent", park)
+}

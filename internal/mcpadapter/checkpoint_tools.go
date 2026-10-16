@@ -97,7 +97,7 @@ func (a *Adapter) handleCheckpointEmit(ctx context.Context, req map[string]any) 
 		}
 		in.TimeoutAt = &t
 	}
-	out, err := a.svc.Checkpoint.Emit(in)
+	out, err := a.svc.Checkpoint.EmitContext(ctx, in)
 	if err != nil {
 		return errFromService(err)
 	}

@@ -77,7 +77,7 @@ func (s *Server) emitCheckpoint(w http.ResponseWriter, r *http.Request) {
 		in.TimeoutAt = &t
 	}
 
-	out, err := s.svc.Checkpoint.Emit(in)
+	out, err := s.svc.Checkpoint.EmitContext(httpTrigger(r, "POST /checkpoints").Context(), in)
 	if err != nil {
 		s.writeCheckpointError(w, err)
 		return
@@ -87,10 +87,8 @@ func (s *Server) emitCheckpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.sse.Broadcast("checkpoint.emitted", map[string]interface{}{
-		"correlation_id": out.CorrelationID,
-		"task_id":        req.TaskID,
-	})
+	// checkpoint.emitted / .responded / .canceled reach /events from the outbox
+	// (sse_outbox.go) for every path, not just this route.
 	writeJSON(w, http.StatusCreated, checkpointJSON(cp, s.requiredWorkflowPolicyForTask(cp.TaskID)))
 }
 
@@ -120,10 +118,6 @@ func (s *Server) respondCheckpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.sse.Broadcast("checkpoint.responded", map[string]interface{}{
-		"correlation_id": corr,
-		"task_id":        cp.TaskID,
-	})
 	writeJSON(w, http.StatusOK, checkpointJSON(cp, s.requiredWorkflowPolicyForTask(cp.TaskID)))
 }
 
@@ -153,10 +147,6 @@ func (s *Server) cancelCheckpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.sse.Broadcast("checkpoint.canceled", map[string]interface{}{
-		"correlation_id": corr,
-		"task_id":        cp.TaskID,
-	})
 	writeJSON(w, http.StatusOK, checkpointJSON(cp, s.requiredWorkflowPolicyForTask(cp.TaskID)))
 }
 

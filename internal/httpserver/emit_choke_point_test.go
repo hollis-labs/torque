@@ -11,12 +11,10 @@ import (
 // else, or one transition would be published twice, or by one path and not
 // another (CW-20261016-0133). This is a code-shape guard on purpose: the way
 // the old gap opened was a handler broadcasting by hand.
-//
-// checkpoint.* is not listed yet; its broadcasts go when checkpoint state events
-// do (a later T1 PR).
 func TestStateKindsAreNotBroadcastOutsideTheOutbox(t *testing.T) {
 	banned := []string{
 		`"task.transitioned"`, `"task.state_changed"`,
+		`"checkpoint.emitted"`, `"checkpoint.responded"`, `"checkpoint.canceled"`,
 		// the plugin bus constants for the same kind
 		`plugin.EventTaskTransitioned`, `EmitTaskTransitioned(`,
 	}

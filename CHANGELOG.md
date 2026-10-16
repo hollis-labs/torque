@@ -42,6 +42,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `envelope`, for every path (MCP and scheduler transitions now show up).
   The direct `task.transitioned` broadcasts and the scheduler bridge's copy are
   gone. Events older than 180 days are trimmed hourly from the head.
+- Run and checkpoint state changes are events too (CW-20261016-0133, PR3):
+  `run.state_changed` (start, completion, operator cancel, kill, supersede,
+  reclaim; the operator paths record trigger `system` until they take a
+  request context) and `checkpoint.state_changed` (emitted, responded, canceled, timed
+  out) are written in the same transaction as the change, with the trigger of
+  whoever caused it. `/events` serves a checkpoint change under the names the
+  GUI banner already listens for (`checkpoint.emitted`, `.responded`,
+  `.canceled`; `timed_out` under its own kind) with `correlation_id` and
+  `task_id`, and a run change as `run.state_changed`. The direct
+  `checkpoint.*` broadcasts in the HTTP handlers are gone, so MCP and scheduler
+  checkpoint changes now reach `/events` too.
 - `/mcp` tool calls are scoped per tool (CW-20261016-0081). Every Torque MCP
   tool maps to `torque.read`, `torque.write` or `torque.admin` in
   `internal/mcpscopes` (deny by default; a test fails if any registered tool
