@@ -117,7 +117,7 @@ var Tools = map[string]string{
 	"torque_session_attach":            write,
 	"torque_session_checkpoint":        write,
 	"torque_session_checkpoint_list":   read,
-	"torque_session_create":            write,
+	"torque_session_create":            admin,
 	"torque_session_get":               read,
 	"torque_session_launch":            admin,
 	"torque_session_list":              read,

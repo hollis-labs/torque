@@ -2,7 +2,11 @@ package mcpadapter
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,4 +63,32 @@ func setupServiceForScopes(t *testing.T) *service.Service {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 	return service.New(store)
+}
+
+// Tools served by the same handler do the same thing, so they must share a
+// scope; otherwise the weaker alias bypasses the stronger one
+// (torque_session_create is torque_session_launch under another name).
+func TestToolsSharingAHandlerShareAScope(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	re := regexp.MustCompile(`newTool\("(torque_[a-z_]+)",(?s:.*?)\), a\.(handle\w+)\)`)
+	byHandler := map[string][]string{}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		require.NoError(t, err)
+		for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+			byHandler[m[2]] = append(byHandler[m[2]], m[1])
+		}
+	}
+	require.NotEmpty(t, byHandler)
+	for h, tools := range byHandler {
+		for _, tool := range tools[1:] {
+			assert.Equal(t, mcpscopes.Tools[tools[0]], mcpscopes.Tools[tool], "%s and %s share %s but not a scope", tools[0], tool, h)
+		}
+	}
+	assert.Equal(t, mcpscopes.Admin, mcpscopes.Tools["torque_session_create"])
+	assert.Equal(t, mcpscopes.Admin, mcpscopes.Tools["torque_session_launch"])
 }
