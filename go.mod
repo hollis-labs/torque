@@ -1,8 +1,6 @@
 module github.com/hollis-labs/torque
 
-go 1.26.8
-
-toolchain go1.26.9
+go 1.26.9
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.71.0
@@ -14,7 +12,7 @@ require (
 	github.com/hollis-labs/substrate/agent v0.3.0
 	github.com/hollis-labs/substrate/harness v0.3.1
 	github.com/hollis-labs/substrate/llm-core v0.1.0
-	github.com/hollis-labs/substrate/mesh v0.1.0
+	github.com/hollis-labs/substrate/mesh v0.4.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/oklog/ulid/v2 v2.1.2
