@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	goplugin "github.com/hollis-labs/plugin"
+	goplugin "github.com/hollis-labs/libs/mcp/plugin-mcp/plugin-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,9 +45,11 @@ func (h *testCRUDHandler) List(ctx context.Context, filters map[string]interface
 }
 
 type testEventHook struct {
-	handled []goplugin.Event
+	pluginID string
+	handled  []goplugin.Event
 }
 
+func (h *testEventHook) PluginID() string     { return h.pluginID }
 func (h *testEventHook) EventTypes() []string { return []string{EventTaskCreated} }
 func (h *testEventHook) Handle(ctx context.Context, event goplugin.Event) error {
 	h.handled = append(h.handled, event)
@@ -126,7 +128,9 @@ func TestRegisterCRUDHandler(t *testing.T) {
 
 func TestRegisterEventHook(t *testing.T) {
 	h := NewTorqueHost(nil, NewLogger("test"))
-	hook := &testEventHook{}
+	owner := &testPlugin{id: "event-hook-owner", name: "Event hook owner"}
+	require.NoError(t, h.LoadPlugin(owner))
+	hook := &testEventHook{pluginID: owner.ID()}
 	err := h.RegisterEventHook([]string{EventTaskCreated}, hook)
 	require.NoError(t, err)
 
@@ -217,7 +221,9 @@ func TestEmitEvent(t *testing.T) {
 	h := NewTorqueHost(nil, NewLogger("test"))
 
 	ch := h.SubscribeEvents()
-	hook := &testEventHook{}
+	owner := &testPlugin{id: "event-hook-owner", name: "Event hook owner"}
+	require.NoError(t, h.LoadPlugin(owner))
+	hook := &testEventHook{pluginID: owner.ID()}
 	require.NoError(t, h.RegisterEventHook([]string{EventRunStarted}, hook))
 
 	h.EmitEvent(NewEvent(EventRunStarted, "test", EventData{RunID: "r1"}))

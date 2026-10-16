@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	goplugin "github.com/hollis-labs/plugin"
+	goplugin "github.com/hollis-labs/libs/mcp/plugin-mcp/plugin-sdk"
 )
 
 type logger struct{ prefix string }

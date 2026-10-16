@@ -3,7 +3,7 @@ package plugin
 import (
 	"time"
 
-	goplugin "github.com/hollis-labs/plugin"
+	goplugin "github.com/hollis-labs/libs/mcp/plugin-mcp/plugin-sdk"
 )
 
 // Event type constants.

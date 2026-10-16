@@ -1,6 +1,6 @@
 package plugin
 
-import goplugin "github.com/hollis-labs/plugin"
+import goplugin "github.com/hollis-labs/libs/mcp/plugin-mcp/plugin-sdk"
 
 // Re-export SDK types for convenience.
 type UIComponent = goplugin.UIComponent

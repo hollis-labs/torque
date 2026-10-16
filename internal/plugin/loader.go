@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	goplugin "github.com/hollis-labs/plugin"
+	goplugin "github.com/hollis-labs/libs/mcp/plugin-mcp/plugin-sdk"
 )
 
 // DiscoveredPlugin is a plugin found on disk that has a registered constructor.
