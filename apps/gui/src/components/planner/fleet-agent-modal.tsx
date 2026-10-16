@@ -1,9 +1,10 @@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@hollis-labs/sysop-ui'
 import { PixelRobot } from '@/components/planner/agent-activity'
+import { MailBadge, Score } from '@/components/planner/fleet-parts'
 import { FLEET_STATE_STYLE } from '@/components/planner/fleet-style'
 import { StateTimeline } from '@/components/planner/fleet-timeline'
 import { ago } from '@/lib/agent-activity'
-import { cwdName, formatDuration, stateDurations, stateSegments, timelineWindow, workingShare, type FleetAgent, type FleetTransition } from '@/lib/fleet-agents'
+import { cwdName, formatDuration, whatNow, stateDurations, stateSegments, timelineWindow, workingShare, type FleetAgent, type FleetTransition } from '@/lib/fleet-agents'
 
 function Fact({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
@@ -16,7 +17,7 @@ function Fact({ label, value, title }: { label: string; value: string; title?: s
 
 const KIND_LABEL: Record<FleetTransition['kind'], string> = { seen: 'first seen', started: 'started', state: 'changed' }
 
-export function FleetAgentModal({ agent, entries, now, onClose }: { agent: FleetAgent; entries: FleetTransition[]; now: number; onClose: () => void }) {
+export function FleetAgentModal({ agent, score, rank, entries, now, onClose }: { agent: FleetAgent; score: number; rank: number; entries: FleetTransition[]; now: number; onClose: () => void }) {
   const s = FLEET_STATE_STYLE[agent.state]
   const windowMs = timelineWindow(entries, now)
   const share = workingShare(entries, now, windowMs)
@@ -34,12 +35,22 @@ export function FleetAgentModal({ agent, entries, now, onClose }: { agent: Fleet
             <div className="min-w-0">
               <DialogTitle className="truncate font-mono uppercase tracking-wide">{cwdName(agent.cwd) || agent.provider}</DialogTitle>
               <DialogDescription className="truncate font-mono text-[11px] tracking-wider" title={agent.cwd}>
-                {agent.provider} · {agent.cwd || 'no working directory reported'}
+                {agent.provider}{agent.model ? ` · ${agent.model}` : ''} · {agent.cwd || 'no working directory reported'}
               </DialogDescription>
+              <div className="truncate font-mono text-[11px] tracking-wider text-zinc-400">
+                {agent.workstream ? `${agent.workstream.name ?? 'workstream'} · ${agent.workstream.id}` : 'no workstream'} · rank #{rank}
+              </div>
               <div className={`mt-1 inline-flex items-center gap-1.5 font-mono text-[10px] tracking-widest ${s.text}`}>
                 <span className={`h-1.5 w-1.5 ${s.dot}`} />
                 {s.label}
                 {agent.stateConfidence && <span className="text-zinc-500">· {agent.stateConfidence}</span>}
+              </div>
+            </div>
+            <div className="ml-auto flex shrink-0 items-start gap-4 text-right">
+              <MailBadge count={agent.messages} />
+              <div>
+                <div className="text-xl text-amber-200"><Score value={score} /></div>
+                <div className="font-mono text-[9px] uppercase tracking-widest text-zinc-500">score</div>
               </div>
             </div>
           </div>
@@ -52,6 +63,7 @@ export function FleetAgentModal({ agent, entries, now, onClose }: { agent: Fleet
         )}
 
         <div className="grid grid-cols-2 gap-3 border-y border-border py-3 sm:grid-cols-4">
+          {agent.lastAction && <Fact label="doing" value={whatNow(agent, now)} />}
           <Fact label="up for" value={agent.startedAt ? formatDuration(now - agent.startedAt) : '—'} title={agent.startedAt ? new Date(agent.startedAt).toLocaleString() : undefined} />
           <Fact label="last activity" value={agent.lastActivity ? ago(agent.lastActivity, now) : '—'} title={agent.lastActivity ? new Date(agent.lastActivity).toLocaleString() : undefined} />
           <Fact label="working (observed)" value={share === null ? '—' : `${share}%`} />
