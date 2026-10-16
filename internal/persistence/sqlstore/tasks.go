@@ -1579,30 +1579,68 @@ func (s *Store) SearchTasks(query string) ([]TaskRecord, error) {
 	return tasks, rows.Err()
 }
 
-// NextTaskID generates an ID in CW-YYYYMMDD-NNNN format. See
-// WriteTx.NextTaskID for the lex-MAX pitfall at the 9999→10000 boundary and
-// why the lookup uses a half-open range with a width-bucketed MAX(id) instead
-// of CAST(substr(id, n) AS INTEGER). For concurrent allocations under writer
-// contention, prefer WriteTx.NextTaskID + CreateTask in one transaction; this
-// auto-commit variant releases the reader between SELECT and the caller's
-// INSERT.
+// NextTaskID generates an ID in CW-YYYYMMDD-NNNN format. The sequence comes
+// from a durable per-day counter (task_id_counters) that never goes backwards,
+// so an id that has been handed out is never handed out again, even after its
+// task is deleted: event_outbox keeps history by task_id, and a reused id would
+// merge two unrelated tasks' histories. See allocTaskID. The allocation runs in
+// its own write transaction, so concurrent callers cannot get the same id; for
+// allocate-and-insert atomicity prefer WriteTx.NextTaskID + CreateTask in one
+// transaction (a failed insert after this call leaves a gap in the ids, which
+// is fine).
 func (s *Store) NextTaskID() (string, error) {
-	today := time.Now().UTC().Format("20060102")
-	prefix := "CW-" + today + "-"
+	w, err := s.BeginWriteTx(context.Background())
+	if err != nil {
+		return "", err
+	}
+	defer w.Rollback()
+	id, err := allocTaskID(w.tx, time.Now().UTC())
+	if err != nil {
+		return "", err
+	}
+	if err := w.Commit(); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// taskIDQuerier is the slice of *sql.Tx that allocTaskID needs.
+type taskIDQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// allocTaskID hands out the next id for now's UTC day and records it in
+// task_id_counters in the same transaction. The sequence is
+// max(counter, highest numeric suffix among today's task ids) + 1: the counter
+// makes it monotonic across deletes; the live MAX keeps it correct for ids
+// that arrived another way (an explicit id, a restored database, a database
+// from before the counter existed).
+//
+// The live MAX does not wrap the id column in CAST(substr(id, ?) AS INTEGER),
+// because that defeats the primary-key index (a full scan of the day's rows).
+// It is a two-step query bounded by a half-open range on id (id >= prefix AND
+// id < prefix_upper), so SQLite uses the covering index for both steps. Step 1
+// finds the widest suffix width for the day (MAX(LENGTH(id))); step 2 finds
+// MAX(id) at that width, where lex order equals numeric order. A plain MAX(id)
+// would misbehave at the 9999 -> 10000 boundary because "9999" sorts above
+// "10000" lexicographically.
+func allocTaskID(q taskIDQuerier, now time.Time) (string, error) {
+	day := now.UTC().Format("20060102")
+	prefix := "CW-" + day + "-"
 	lo, hi := taskIDRange(prefix)
 
 	var maxLen sql.NullInt64
-	if err := s.db.QueryRow(
+	if err := q.QueryRow(
 		`SELECT MAX(LENGTH(id)) FROM tasks WHERE id >= ? AND id < ?`,
 		lo, hi,
 	).Scan(&maxLen); err != nil {
 		return "", err
 	}
-
-	seq := int64(1)
+	liveMax := int64(0)
 	if maxLen.Valid {
 		var maxID sql.NullString
-		if err := s.db.QueryRow(
+		if err := q.QueryRow(
 			`SELECT MAX(id) FROM tasks WHERE id >= ? AND id < ? AND LENGTH(id) = ?`,
 			lo, hi, maxLen.Int64,
 		).Scan(&maxID); err != nil {
@@ -1613,8 +1651,25 @@ func (s *Store) NextTaskID() (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("NextTaskID: parsing suffix of %q: %w", maxID.String, err)
 			}
-			seq = n + 1
+			liveMax = n
 		}
+	}
+
+	var counter sql.NullInt64
+	if err := q.QueryRow(`SELECT last_seq FROM task_id_counters WHERE day = ?`, day).Scan(&counter); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	seq := liveMax
+	if counter.Valid && counter.Int64 > seq {
+		seq = counter.Int64
+	}
+	seq++
+	if _, err := q.Exec(
+		`INSERT INTO task_id_counters (day, last_seq) VALUES (?, ?)
+		 ON CONFLICT (day) DO UPDATE SET last_seq = excluded.last_seq`,
+		day, seq,
+	); err != nil {
+		return "", fmt.Errorf("NextTaskID: advance counter: %w", err)
 	}
 	return fmt.Sprintf("%s%04d", prefix, seq), nil
 }
