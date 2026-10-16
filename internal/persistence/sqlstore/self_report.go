@@ -55,6 +55,9 @@ func (w *WriteTx) SelfReport(tool string, in map[string]any, digest string) (map
 		var boundRun sql.NullInt64
 		var tether, launchID, workstream sql.NullString
 		err := w.tx.QueryRow(`SELECT task_id,run_id,progress_detail,tether_session_id,launch_id,workstream_id FROM sessions WHERE id=?`, sessionID).Scan(&owner, &boundRun, &boundDetail, &tether, &launchID, &workstream)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, &SelfReportError{Code: "not_found", Message: "bound report session no longer exists"}
+		}
 		if err != nil {
 			return nil, err
 		}

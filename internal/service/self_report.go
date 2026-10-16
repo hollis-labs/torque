@@ -58,11 +58,14 @@ func validateSelfReport(tool string, input map[string]any) (string, error) {
 		}
 	}
 	if data, ok := input["data"]; ok {
-		encoded, err := json.Marshal(data)
-		if err != nil {
+		var encoded bytes.Buffer
+		encoder := json.NewEncoder(&encoded)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(data); err != nil {
 			return "", err
 		}
-		if len(encoded) > 16384 {
+		// Encoder appends a newline that is not part of the inline JSON.
+		if encoded.Len()-1 > 16384 {
 			return "", &SelfReportError{Code: "data_too_large", Message: "inline data exceeds 16 KiB; create it with torque_artifact_create and pass artifact_id"}
 		}
 	}
@@ -70,6 +73,11 @@ func validateSelfReport(tool string, input map[string]any) (string, error) {
 	for k, v := range input {
 		if k != "idempotency_key" {
 			canonical[k] = v
+		}
+	}
+	if tool == "torque_task_progress" {
+		if _, present := canonical["level"]; !present {
+			canonical["level"] = "step"
 		}
 	}
 	raw, err = json.Marshal(canonical)

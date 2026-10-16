@@ -55,6 +55,9 @@ func (s *Server) selfReport(w http.ResponseWriter, r *http.Request, data bool) {
 			if code == "idempotency_conflict" {
 				status = http.StatusConflict
 			}
+			if code == "not_found" {
+				status = http.StatusNotFound
+			}
 			if code == "data_too_large" {
 				status = http.StatusRequestEntityTooLarge
 			}

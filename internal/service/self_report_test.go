@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,6 +15,7 @@ import (
 	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents"
 	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
 	"github.com/hollis-labs/torque/internal/service"
 	"github.com/stretchr/testify/require"
 )
@@ -310,4 +310,49 @@ func TestSelfReportCatalogPayloadConformance(t *testing.T) {
 			require.Equal(t, fmt.Sprintf("msg://artifact/torque/%d", artifact.ID), payload["ref"])
 		}
 	}
+}
+
+func TestSelfReportDefaultLevelIdempotency(t *testing.T) {
+	svc := setupService(t)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "default level", ProgressDetail: "step"})
+	require.NoError(t, err)
+	in := map[string]any{"task_id": task.ID, "label": "ready", "idempotency_key": "default"}
+	first, err := svc.Task.Progress(context.Background(), in)
+	require.NoError(t, err)
+	require.Equal(t, true, first["emitted"])
+	require.NotContains(t, in, "level", "validation must not mutate shared caller input")
+	in["level"] = "step"
+	out, err := svc.Task.Progress(context.Background(), in)
+	require.NoError(t, err)
+	require.Equal(t, "duplicate", out["suppressed_reason"])
+	require.Equal(t, first["event_id"], out["event_id"])
+	in["level"] = "milestone"
+	_, err = svc.Task.Progress(context.Background(), in)
+	assertReportCode(t, err, "idempotency_conflict")
+}
+
+func TestSelfReportInlineHTMLByteLimit(t *testing.T) {
+	svc := setupService(t)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "HTML data"})
+	require.NoError(t, err)
+	for _, size := range []int{16384, 16385} {
+		_, err := svc.Task.EmitData(context.Background(), map[string]any{"task_id": task.ID, "schema": "html@1", "data": map[string]any{"x": strings.Repeat("<", size-8)}})
+		if size == 16384 {
+			require.NoError(t, err)
+		} else {
+			assertReportCode(t, err, "data_too_large")
+		}
+	}
+}
+
+func TestSelfReportMissingBoundSession(t *testing.T) {
+	svc, store := setupServiceWithStore(t)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "missing session", ProgressDetail: "step"})
+	require.NoError(t, err)
+	ctx := sqlstore.ContextWithReportSession(context.Background(), "SES-removed")
+	_, err = svc.Task.Progress(ctx, map[string]any{"task_id": task.ID, "label": "ready"})
+	assertReportCode(t, err, "not_found")
+	var n int
+	require.NoError(t, store.DB().QueryRow(`SELECT COUNT(*) FROM event_outbox WHERE task_id=?`, task.ID).Scan(&n))
+	require.Zero(t, n)
 }
