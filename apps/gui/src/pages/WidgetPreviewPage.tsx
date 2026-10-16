@@ -11,7 +11,10 @@ import {
 } from '@/components/widgets'
 import { useApi } from '@/hooks/use-api'
 import { usePagedList } from '@/hooks/use-paged-list'
+import { ConsoleProvider, ConsoleDebugPanel, FixtureSource } from '@/console'
 import { ListPageControls } from '@/components/domain/list-page-controls'
+
+const consoleFixture = new FixtureSource()
 
 export default function WidgetPreviewPage() {
   const api = useApi()
@@ -35,6 +38,15 @@ export default function WidgetPreviewPage() {
       <ListPageControls page={taskPage} label="tasks" />
       <ListPageControls page={runPage} label="runs" />
       <div className="flex flex-1 flex-col gap-6 overflow-auto p-4">
+        <section className="rounded border border-border/60 bg-card/40 p-4">
+          <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            Console Feed (fixture)
+          </h2>
+          <ConsoleProvider source={consoleFixture}>
+            <ConsoleDebugPanel />
+          </ConsoleProvider>
+        </section>
+
         <section className="rounded border border-border/60 bg-card/40 p-4">
           <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
             Activity Heatmap
