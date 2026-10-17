@@ -40,6 +40,35 @@ records with `state` and `lifecycle_generation` added. Nothing writes
 from the old metadata; a child naming a phase its plan does not have was not
 given one and is listed in `plan_phase_repairs`.
 
+## Phase lifecycle
+
+A phase is `pending`, `started` or `completed`. It is derived from its members
+and re-evaluated inside the transaction of anything that changes them: a member's
+status change, a member added to or moved out of the phase, a member deleted, or
+a member created already done.
+
+- A pending phase **starts** once any member is `doing`, `review`, `blocked`,
+  `paused` or `done`. It appends `phase.started`.
+- A phase **completes** when it has members and all of them are `done` (review,
+  archived and the rest are not success). It appends `phase.completed`. If one
+  change both starts and completes it (the last member going straight to `done`,
+  or a member created `done`), both events are written, started first, each with
+  its own id and the same cause.
+- A blocked member keeps the phase started; there is no `phase.blocked`.
+- A completed phase never reverts on its own. `ReopenPhase` returns it to
+  `started`, bumps `lifecycle_generation` and appends `phase.started` with the
+  new generation and `reopened: true`. Do it before adding or reactivating work.
+- A phase left with no members keeps its state; an empty phase has nothing to
+  move it and needs an explicit start or complete (not yet exposed).
+- Postgres: the phase row is read `FOR UPDATE` before members are counted.
+
+Each event is the phase's own (`msg://phase/torque/<plan>/<phase>`; phase ids are
+per plan and the subject never changes), carries `progress{done,total}` and
+`lifecycle_generation`, and, when a member's `task.state_changed` caused it,
+names that event as its `corr.causation_id`. A membership change has no task
+event and so no causation. `scope.task_id` on a phase event is the plan task's id (the phase has none of its own). `scope.plan_id` and `scope.phase_id` on task events
+come from these records.
+
 ## Service surface
 
 `service.PlanService` wraps the ordinary `TaskService` with the following
@@ -50,6 +79,7 @@ conveniences:
 - `AddPhase(planID, name, acceptance)` — appends a phase, returns the new id.
 - `RemovePhase(planID, phaseID)` — removes (tombstones) a phase. Rejected if any
   child still belongs to `phaseID`.
+- `ReopenPhase(planID, phaseID)` — reopens a completed phase (generation + 1).
 - `ListChildren(planID, phaseID?)` — lists children of the plan, optionally
   narrowed by phase.
 - `Progress(planID)` — totals + per-phase done/blocked counts.

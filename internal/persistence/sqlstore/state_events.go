@@ -89,6 +89,9 @@ type stateScope struct {
 	RunID                                   sql.NullInt64
 	Attempt                                 uint32
 	TetherSessionID, LaunchID, WorkstreamID string
+	// PlanID and PhaseID come from the plan_phases records (migration 043):
+	// the task's parent plan and phase, or the plan task itself.
+	PlanID, PhaseID string
 }
 
 // stateChange is one entity transition handed to appendStateEvent.
@@ -246,6 +249,8 @@ func (w *WriteTx) appendEvent(sp eventSpec) (string, error) {
 			ProjectID:    sp.Scope.ProjectID,
 			EpicID:       sp.Scope.EpicID,
 			SprintID:     sp.Scope.SprintID,
+			PlanID:       sp.Scope.PlanID,
+			PhaseID:      sp.Scope.PhaseID,
 			TaskID:       sp.Scope.TaskID,
 			Attempt:      sp.Scope.Attempt,
 			LaunchID:     sp.Scope.LaunchID,
@@ -294,6 +299,7 @@ func (w *WriteTx) appendEvent(sp eventSpec) (string, error) {
 		return "", fmt.Errorf("append event: %w", err)
 	}
 	w.wakeOutbox = true
+	w.lastEventID = ev.ID
 	return ev.ID, nil
 }
 
@@ -388,10 +394,14 @@ func (w *WriteTx) trigger(explicit Trigger) Trigger {
 }
 
 // scopeForTask reads the dimensions Torque can verify from the task row.
+// It is taskScope with a missing task tolerated: the scope then holds only the
+// task id. Plan and phase come from the plan_phases records.
 func (w *WriteTx) scopeForTask(taskID string) stateScope {
-	var project, epic, sprint sql.NullString
-	_ = w.tx.QueryRow(`SELECT project_id, epic_id, sprint_id FROM tasks WHERE id = ?`, taskID).Scan(&project, &epic, &sprint)
-	return stateScope{ProjectID: project.String, EpicID: epic.String, SprintID: sprint.String, TaskID: taskID}
+	scope, err := w.taskScope(taskID)
+	if err != nil {
+		return stateScope{TaskID: taskID}
+	}
+	return scope
 }
 
 // RecordRunStateChange appends a run.state_changed event for a run whose
