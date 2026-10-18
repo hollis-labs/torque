@@ -32,6 +32,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   reopens a completed phase and bumps its lifecycle generation. Task, run and
   checkpoint events now carry `scope.plan_id` and `scope.phase_id` from the
   records.
+- Gate events (CW-20261016-0134, T2 part 3). The acceptance gates (deliverables,
+  required subtodos, landing) return a typed `GateEvaluation`, and the code that
+  owns the transition records them as `gate.evaluated` events in its
+  transaction, ahead of the `task.state_changed` they cause. Results are `pass`,
+  `fail`, `blocked` and `skipped` (a waiver or a forced `done`); an evaluation
+  error reports `blocked` without changing whether acceptance proceeds.
 
 - Task state changes are written to a transactional outbox (CW-20261016-0133,
   PR1). Migration 042 adds `event_outbox`; every task transition (store,

@@ -223,8 +223,15 @@ func New(
 	return s
 }
 
+// SetLandingEvaluator installs the typed landing check the lifecycle runs
+// before an on_done close/notify exit marks a task done; its result is
+// recorded as a gate.evaluated event. It takes precedence over SetLandingGate.
+func (s *Scheduler) SetLandingEvaluator(g func(context.Context, *sqlstore.TaskRecord) sqlstore.GateEvaluation) {
+	s.lifecycle.SetLandingEvaluator(g)
+}
+
 // SetLandingGate installs the landing check the lifecycle runs before an
-// on_done close/notify exit marks a task done.
+// on_done close/notify moves a task to done, as the unmet requirements.
 func (s *Scheduler) SetLandingGate(g func(context.Context, *sqlstore.TaskRecord) string) {
 	s.lifecycle.SetLandingGate(g)
 }
@@ -372,7 +379,7 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	// Roll up parent-kind task statuses from their children. Runs before
 	// the pick so a parent transitioned by the rollup isn't picked up
 	// again this tick. Picker also filters kind=parent as belt-and-braces.
-	if err := ParentRollupTickGated(s.store, s.bus, s.lifecycle.landingGate); err != nil {
+	if err := ParentRollupTickEvaluated(s.store, s.bus, s.lifecycle.landingEvaluation()); err != nil {
 		log.Printf("[scheduler] parent rollup error: %v", err)
 	}
 

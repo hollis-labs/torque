@@ -1089,12 +1089,19 @@ func (s *TaskService) Transition(ctx context.Context, id, newStatus string) (err
 	if err := checkTransition(task.Status, newStatus); err != nil {
 		return err
 	}
+	var evals []sqlstore.GateEvaluation
 	if newStatus == "done" && task.Status != "done" {
-		if err := s.EnforceLanding(ctx, task); err != nil {
+		var err error
+		if evals, err = s.EnforceLanding(ctx, task); err != nil {
 			return err
 		}
 	}
-	if err := s.store.TransitionTaskOpts(ctx, id, newStatus, sqlstore.TransitionOpts{}); err != nil {
+	if len(evals) > 0 {
+		// The gate that allowed the done is recorded in the done's transaction.
+		if err := s.transitionWithGates(ctx, id, task.Status, newStatus, evals); err != nil {
+			return err
+		}
+	} else if err := s.store.TransitionTaskOpts(ctx, id, newStatus, sqlstore.TransitionOpts{}); err != nil {
 		return err
 	}
 	s.notifyTransition(ctx, id, task.Status, newStatus)
@@ -1140,7 +1147,28 @@ func (s *TaskService) ForceTransition(ctx context.Context, id, newStatus string)
 			),
 		}
 	}
-	if err := s.store.TransitionTaskOpts(ctx, id, newStatus, sqlstore.TransitionOpts{Forced: true}); err != nil {
+	if skips := forcedGateSkips(task, newStatus); len(skips) > 0 {
+		wtx, err := s.store.BeginWriteTx(ctx)
+		if err != nil {
+			return err
+		}
+		defer wtx.Rollback()
+		if cur, serr := wtx.TaskStatusLocked(id); serr != nil {
+			return serr
+		} else if cur != task.Status {
+			return &TransitionError{From: task.Status, To: newStatus, Message: fmt.Sprintf("task changed from %s to %s during the transition; retry", task.Status, cur)}
+		}
+		deciding, err := wtx.AppendGateEvaluations(id, 0, skips, sqlstore.ResolveTrigger(ctx))
+		if err != nil {
+			return err
+		}
+		if err := wtx.TransitionTaskOpts(id, newStatus, sqlstore.TransitionOpts{Forced: true, CausationID: deciding}); err != nil {
+			return err
+		}
+		if err := wtx.Commit(); err != nil {
+			return err
+		}
+	} else if err := s.store.TransitionTaskOpts(ctx, id, newStatus, sqlstore.TransitionOpts{Forced: true}); err != nil {
 		return err
 	}
 	s.notifyTransition(ctx, id, task.Status, newStatus)
@@ -1186,6 +1214,7 @@ func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, 
 
 	// force skips the terminal guard but not the vocabulary, matching
 	// ForceTransition — see its doc comment for why the split matters.
+	var gateEvals []sqlstore.GateEvaluation
 	if force {
 		if !IsCanonicalStatus(newStatus) {
 			return &TransitionError{
@@ -1202,7 +1231,8 @@ func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, 
 			return err
 		}
 		if newStatus == "done" && task.Status != "done" {
-			if err := s.EnforceLanding(ctx, task); err != nil {
+			var err error
+			if gateEvals, err = s.EnforceLanding(ctx, task); err != nil {
 				return err
 			}
 		}
@@ -1214,7 +1244,24 @@ func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, 
 	}
 	defer wtx.Rollback()
 
-	if err := wtx.TransitionTaskOpts(id, newStatus, sqlstore.TransitionOpts{Forced: force}); err != nil {
+	// Confirm the status the gates were decided against, then record them in
+	// this transaction with the transition.
+	var deciding string
+	if force {
+		gateEvals = forcedGateSkips(task, newStatus)
+	}
+	if len(gateEvals) > 0 {
+		if cur, serr := wtx.TaskStatusLocked(id); serr != nil {
+			return serr
+		} else if cur != task.Status {
+			return &TransitionError{From: task.Status, To: newStatus, Message: fmt.Sprintf("task changed from %s to %s during the transition; retry", task.Status, cur)}
+		}
+		var gerr error
+		if deciding, gerr = wtx.AppendGateEvaluations(id, 0, gateEvals, sqlstore.ResolveTrigger(ctx)); gerr != nil {
+			return gerr
+		}
+	}
+	if err := wtx.TransitionTaskOpts(id, newStatus, sqlstore.TransitionOpts{Forced: force, CausationID: deciding}); err != nil {
 		return err
 	}
 	rec := &sqlstore.CommentRecord{
@@ -1301,8 +1348,7 @@ func subtodoIDTaken(items []sqlstore.Subtodo, id string) bool {
 // newSubtodoID returns a short random subtodo id under a dedicated "sub_"
 // prefix so generated ids can never collide with a caller-supplied
 // slug-style id (e.g. "check-auth-flow") — slugs are free to omit that
-// prefix entirely. Mirrors the crypto/rand + hex approach used by
-// internal/runtime/scheduler.newEventID: 8 random bytes (64 bits) is ample
+// prefix entirely. Uses crypto/rand + hex: 8 random bytes (64 bits) is ample
 // for uniqueness within a single task's checklist (typically low tens of
 // items), and subtodos have no global/cross-task query surface that would
 // call for a date-bucketed sequential scheme like the other entity IDs.
