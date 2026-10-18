@@ -3,8 +3,10 @@ package sqlitetest
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,7 +63,7 @@ func OpenDB(t *testing.T, opts ...Option) *sql.DB {
 	t.Helper()
 
 	cfg := newConfig(opts...)
-	db := openDB(t, cfg)
+	db := openDB(t, cfg, false)
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
@@ -70,7 +72,7 @@ func OpenStore(t *testing.T, opts ...Option) *sqlstore.Store {
 	t.Helper()
 
 	cfg := newConfig(opts...)
-	db := openDB(t, cfg)
+	db := openDB(t, cfg, true)
 	requireMigrations(t, db)
 
 	store, err := sqlstore.New(db, "sqlite")
@@ -89,10 +91,18 @@ func OpenStore(t *testing.T, opts ...Option) *sqlstore.Store {
 	return store
 }
 
-func openDB(t *testing.T, cfg config) *sql.DB {
+func openDB(t *testing.T, cfg config, migrated bool) *sql.DB {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), sanitizeName(t.Name())+".db")
+	if migrated {
+		// Start from a copy of one migrated file: replaying every migration
+		// costs ~2.2s a database under -race (0.07s without it). On any problem
+		// the file stays absent and OpenStore's migrations.Run does the work.
+		if img := migratedImage(); len(img) > 0 {
+			_ = os.WriteFile(dbPath, img, 0o600)
+		}
+	}
 	writerOpts := sqlitekit.WriterOptions()
 	writerOpts.BusyTimeout = cfg.busyTimeout
 
@@ -114,4 +124,36 @@ func requireMigrations(t *testing.T, db *sql.DB) {
 func sanitizeName(name string) string {
 	replacer := strings.NewReplacer("/", "-", " ", "-", ":", "-", "\\", "-")
 	return replacer.Replace(name)
+}
+
+var (
+	imageOnce  sync.Once
+	imageBytes []byte
+)
+
+// migratedImage returns the bytes of a closed, fully migrated empty database,
+// built once per test binary.
+func migratedImage() []byte {
+	imageOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "torque-migrated-")
+		if err != nil {
+			return
+		}
+		defer func() { _ = os.RemoveAll(dir) }()
+		path := filepath.Join(dir, "template.db")
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			return
+		}
+		db.SetMaxOpenConns(1)
+		runErr := migrations.Run(db)
+		closeErr := db.Close()
+		if runErr != nil || closeErr != nil {
+			return
+		}
+		if b, err := os.ReadFile(path); err == nil { //nolint:gosec // G304: the file this function just created
+			imageBytes = b
+		}
+	})
+	return imageBytes
 }
