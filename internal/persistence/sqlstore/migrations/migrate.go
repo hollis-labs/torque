@@ -14,7 +14,13 @@ import (
 //go:embed *.sql postgres
 var migrationFS embed.FS
 
+// Run applies every migration that db has not recorded yet.
 func Run(db *sql.DB) error {
+	seedFromTemplate(db)
+	return run(db)
+}
+
+func run(db *sql.DB) error {
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {

@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/hollis-labs/torque/internal/persistence/sqlstore/migrations"
+
 	"github.com/hollis-labs/torque/internal/testutil/testenv"
 )
 
@@ -12,6 +14,7 @@ import (
 // shims first on PATH so no test can run a real claude/codex/opencode
 // (CW-20261001-0041).
 func TestMain(m *testing.M) {
+	migrations.UseMigratedTemplate()
 	testenv.UnsetTorqueEnv()
 	os.Exit(testenv.RunWithAgentShims(m))
 }
