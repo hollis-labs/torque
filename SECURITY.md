@@ -92,6 +92,21 @@ What each mode does:
 - `permissive`: as `off`, and anything `enforce` would have refused is logged as "would deny".
 - `enforce`: only a valid JWT with the needed scope, or the static token (which carries `torque.*`), is admitted. Anonymous callers get 401, an under-scoped token 403. `/mcp` needs a valid token at the transport and each tool call is scoped separately.
 
+**Reloading without a restart.** Put the settings in `auth.yaml` in Torque's config directory (`torque path` shows it) instead of the environment and `torque serve` re-reads them on an edit (checked every 2 seconds, applied once the file is stable) or on `SIGHUP`:
+
+```yaml
+mode: enforce          # off | permissive | enforce
+jwt:
+  issuer: https://tether.example
+  audience: torque
+  jwks_url: ...          # default <issuer>/.well-known/jwks.json
+  bootstrap_key_file: /path/issuer.pub.pem
+deny_list:
+  url: ...               # default <issuer>/auth/denylist
+```
+
+When `auth.yaml` exists it replaces the `TORQUE_AUTH_*` environment as the source of these settings; without it nothing changes (environment, read once). The static token (`TORQUE_API_TOKEN` / `--token`) is a startup input, is not part of the file, and keeps working across reloads. A reload is all or nothing: the next verifier is built and validated before it replaces the running one (a JWKS URL with no bootstrap key needs its first fetch to succeed), and any failure (an unparsable file, an unknown key, an invalid mode, an unreadable key file, an unreachable endpoint) is logged and changes nothing. **A reload never forgets a revocation:** while the deny-list URL is unchanged the known list is kept, so an edit or `SIGHUP` during an outage of the issuer's deny-list cannot un-revoke a token; a new or changed URL needs a validated first fetch or the reload is refused. Each request is judged by the mode and verifier it started under (security/auth v0.2.1). Reloading can relax auth (for example enforce to permissive); that is the owner editing their own config and is logged, and it is a dev-posture behavior: a release posture must constrain it (the release-posture note owns the rule).
+
 **Service tokens.** A dev service token is a Tether JWT with `kind=service`, `aud=torque`, scopes such as `torque.read torque.write` and an `exp` about ten years away (the verifier requires `exp`, so "no expiry" is a distant one). It needs no refresher. Revoke it by putting its `jti` on Tether's deny-list: revocation takes effect within one poll interval (30s by default) after a successful poll. If the issuer or its deny-list is unreachable, the last list stays in force (stale), so a revoked token keeps being accepted for as long as the outage lasts. Keep `TORQUE_API_TOKEN` configured as a fallback until the service token is proven.
 
 ## External session launch paths

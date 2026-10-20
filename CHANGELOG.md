@@ -8,6 +8,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Auth settings reload without a restart (CW-20261019-0046, security/auth
+  v0.2.1). An optional `auth.yaml` in the config directory replaces the
+  `TORQUE_AUTH_*` environment as the source of the mode and the JWT / deny-list
+  settings and is re-read on an edit or `SIGHUP`. All or nothing: the next
+  verifier is built and validated first (a JWKS URL with no bootstrap key needs
+  its first fetch), a failed reload changes nothing, and a reload never forgets
+  a revocation (the deny-list is kept while its URL is unchanged; a new URL needs
+  a validated first fetch). Requests are pinned to the mode and verifier they
+  started under. No change without the file. `security/auth` is now v0.2.1.
 - Auth dial and service tokens documented and tested (CW-20261020-0003).
   `SECURITY.md` lists the `HOLLIS_AUTH_TORQUE` / `HOLLIS_AUTH` dial and the
   `TORQUE_AUTH_*` variables and what each mode admits. Tests prove a
