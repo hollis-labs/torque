@@ -12,7 +12,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -95,19 +94,20 @@ refused. Browser origins other than loopback ones must be allowed with
 			// HOLLIS_AUTH_TORQUE / HOLLIS_AUTH say otherwise. enforce needs
 			// no loopback check, and off/permissive keep the token-required
 			// non-loopback rule in ValidateBind above.
-			guard, err := httpserver.NewGuard(ctx, httpserver.AuthConfig{
-				Issuer:           strings.TrimSpace(os.Getenv("TORQUE_AUTH_ISSUER")),
-				Audience:         strings.TrimSpace(os.Getenv("TORQUE_AUTH_AUDIENCE")),
-				JWKSURL:          strings.TrimSpace(os.Getenv("TORQUE_AUTH_JWKS_URL")),
-				BootstrapKeyFile: strings.TrimSpace(os.Getenv("TORQUE_AUTH_BOOTSTRAP_KEY_FILE")),
-				DenyListURL:      strings.TrimSpace(os.Getenv("TORQUE_AUTH_DENYLIST_URL")),
-				StaticToken:      sec.Token,
-			})
+			// An auth.yaml in the config directory replaces the TORQUE_AUTH_*
+			// environment (precedence: see httpserver.AuthFileName) and is
+			// re-read on an edit or SIGHUP.
+			a, authFile, err := httpserver.StartAuth(ctx, cfg.ConfigDir, os.Getenv, sec.Token, addr, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 			if err != nil {
-				return fmt.Errorf("auth: %w", err)
+				return err
 			}
+			if authFile != "" {
+				log.Printf("[serve] auth settings from %s", authFile)
+			}
+			guard := a.Guard
 			sec.Guard = guard
 			log.Printf("[serve] %s", guard.Status())
+			go a.Watch(ctx, filepath.Join(cfg.ConfigDir, httpserver.AuthFileName), 0, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
 			return runServe(ctx, ln, sec)
 		},
