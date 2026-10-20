@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/url"
 	"strings"
 	"sync"
@@ -123,7 +122,7 @@ func NewAuth(ctx context.Context, c AuthConfig) (*Auth, error) {
 	if err != nil {
 		return nil, err
 	}
-	g, err := auth.New(auth.Config{Mode: gen.mode, Verifier: gen.verifier, Scopes: a.scopes, Audit: c.Audit, Logger: c.Logger})
+	g, err := auth.New(auth.Config{Mode: gen.mode, Verifier: gen.verifier, Scopes: a.scopes, Audit: c.Audit, Logger: c.Logger, ReloadBind: c.Addr})
 	if err != nil {
 		gen.stopNew(nil)
 		return nil, err
@@ -183,52 +182,25 @@ func (a *Auth) logMode(c AuthConfig, mode auth.Mode, when string) {
 	a.log.Warn("auth mode in effect", "when", when, "mode", string(mode), "source", src, "auth_file", file)
 }
 
-func modeRank(m auth.Mode) int {
-	switch m {
-	case auth.ModeEnforce:
-		return 2
-	case auth.ModePermissive:
-		return 1
-	}
-	return 0
-}
-
 // checkRelaxation refuses a reload that would weaken the mode on a listener
-// that is not loopback (tailnet included). Relaxing on loopback is allowed (the
-// guard logs a WARN naming the old and new mode when it is applied). It runs
-// before anything is built or started.
+// that is not loopback (tailnet included), using the shared rule from
+// security/auth v0.3.0 (IsLoopbackAddr, Mode.WeakerThan, ErrLoosenRefused).
+// Relaxing on loopback is allowed (the guard logs a WARN naming the old and new
+// mode when it is applied). It runs before anything is built or started; the
+// guard's own Config.ReloadBind refuses the same thing at Apply as a backstop.
 func (a *Auth) checkRelaxation(c AuthConfig) error {
 	next, err := resolveMode(c)
 	if err != nil {
 		return err
 	}
 	cur := a.Guard.Mode()
-	if a.addr == "" || modeRank(next) >= modeRank(cur) {
+	if a.addr == "" || !next.WeakerThan(cur) {
 		return nil
 	}
-	if !loopbackListener(a.addr) {
-		return fmt.Errorf("refusing to relax %s to %s: the listener is not loopback (a reload may only relax on loopback; restart to change it)", cur, next)
+	if !auth.IsLoopbackAddr(a.addr) {
+		return fmt.Errorf("%w: refusing to relax %s to %s: the listener is not loopback (a reload may only relax on loopback; restart to change it)", auth.ErrLoosenRefused, cur, next)
 	}
 	return nil
-}
-
-// loopbackListener is true for a unix socket, localhost or a loopback IP. It is
-// deliberately stricter than auth.ValidateBind, which also admits tailnet
-// addresses: a reload may only relax auth where nothing but the local machine
-// can reach the listener. An address that does not parse is not loopback.
-func loopbackListener(addr string) bool {
-	if strings.HasPrefix(addr, "unix:") || strings.HasPrefix(addr, "/") {
-		return true
-	}
-	host, _, err := net.SplitHostPort(strings.TrimPrefix(addr, "tcp:"))
-	if err != nil {
-		return false
-	}
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-	return ip != nil && ip.IsLoopback()
 }
 
 // resolveMode is the configured mode, else HOLLIS_AUTH_TORQUE / HOLLIS_AUTH,

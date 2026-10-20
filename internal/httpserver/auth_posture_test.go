@@ -487,3 +487,21 @@ func TestTailnetBindAcceptsASameModeReloadThroughTheServeWiring(t *testing.T) {
 	require.Error(t, r.Load(context.Background()), "loosening on 100.x")
 	assert.Equal(t, auth.ModeEnforce, a.Guard.Mode())
 }
+
+// The guard carries the same rule as a backstop (Config.ReloadBind): even a
+// direct Apply, bypassing Auth.Reload's pre-check, cannot loosen off loopback.
+func TestGuardBackstopRefusesLooseningOffLoopback(t *testing.T) {
+	i := newJWTIssuer(t)
+	for addr, allowed := range map[string]bool{"100.64.1.2:7777": false, "0.0.0.0:7777": false, "127.0.0.1:7777": true} {
+		cfg := i.cfg(auth.ModeEnforce)
+		cfg.Addr = addr
+		a, _ := newAuthServer(t, cfg)
+		err := a.Guard.Apply(auth.ModePermissive, nil)
+		if allowed {
+			assert.NoError(t, err, addr)
+			continue
+		}
+		assert.ErrorIs(t, err, auth.ErrLoosenRefused, addr)
+		assert.Equal(t, auth.ModeEnforce, a.Guard.Mode(), addr)
+	}
+}
