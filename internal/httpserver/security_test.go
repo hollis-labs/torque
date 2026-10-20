@@ -341,13 +341,21 @@ func TestGuardServiceToken_AdmittedAndScopedInEveryMode(t *testing.T) {
 		assert.NotEmpty(t, created.ID, mode)
 		assert.Equal(t, "created by a service token", created.Title, mode)
 		got := do(t, "GET", ts.URL+"/api/v1/tasks/"+created.ID, bearer(read))
-		assert.Equal(t, http.StatusOK, got.StatusCode, "the created task is readable, %s", mode)
+		require.Equal(t, http.StatusOK, got.StatusCode, "the created task is readable, %s", mode)
+		var fetched struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		}
+		require.NoError(t, json.NewDecoder(got.Body).Decode(&fetched))
+		assert.Equal(t, created.ID, fetched.ID, mode)
+		assert.Equal(t, created.Title, fetched.Title, mode)
 	}
 }
 
-// Revocation is eventual: the token is rejected after a deny-list poll that
-// succeeds and lists its jti. The short interval keeps the test fast; it is not
-// asserted as a bound (a failed poll keeps the previous list).
+// Revocation takes effect within one poll interval after a successful poll
+// (the deny-list lists the jti); when the poll fails the last list stays in
+// force (stale). The short interval only keeps the test fast: the test waits
+// for the effect and does not assert a bound.
 func TestGuardServiceToken_RevokedByDenyListOnNextSuccessfulPoll(t *testing.T) {
 	iss := newJWTIssuer(t)
 	tok := iss.serviceToken("torque.read torque.write", "svc-1")
@@ -386,10 +394,14 @@ func TestGuardServiceToken_WrongAudienceAndMissingExpRefused(t *testing.T) {
 	bearer := func(tok string) map[string]string { return map[string]string{"Authorization": "Bearer " + tok} }
 	other := iss.mint(map[string]any{"iss": "https://tether.test", "sub": "svc", "aud": "tesseract", "scope": "torque.read",
 		"kind": "service", "jti": "j", "exp": time.Now().Add(time.Hour).Unix()})
+	// Absent exp: the claim is not in the payload at all.
 	noExp := iss.mint(map[string]any{"iss": "https://tether.test", "sub": "svc", "aud": "torque", "scope": "torque.read",
 		"kind": "service", "jti": "j"})
-	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(other)).StatusCode)
-	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(noExp)).StatusCode)
+	zeroExp := iss.mint(map[string]any{"iss": "https://tether.test", "sub": "svc", "aud": "torque", "scope": "torque.read",
+		"kind": "service", "jti": "j", "exp": 0})
+	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(other)).StatusCode, "wrong audience")
+	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(noExp)).StatusCode, "absent exp")
+	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(zeroExp)).StatusCode, "zero exp")
 }
 
 func TestNewGuard_DialFromEnvironment(t *testing.T) {

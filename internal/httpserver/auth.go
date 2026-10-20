@@ -32,10 +32,11 @@ type AuthConfig struct {
 	JWKSURL          string // default <Issuer>/.well-known/jwks.json
 	BootstrapKeyFile string
 	DenyListURL      string // default <Issuer>/auth/denylist when Issuer is set
-	// DenyListInterval is the deny-list poll period; default 30s. A revoked
-	// token is rejected after the next poll that succeeds. A failed poll keeps
-	// the previous list, so this is not an upper bound while the deny-list
-	// endpoint is unreachable, which matters for long-lived service tokens.
+	// DenyListInterval is the deny-list poll period; default 30s. Revocation
+	// takes effect within one interval after a successful poll. If the
+	// deny-list endpoint is unreachable the last list stays in force (stale),
+	// so this is not an upper bound during an outage, which matters for
+	// long-lived service tokens.
 	DenyListInterval time.Duration
 	// StaticToken is the legacy TORQUE_API_TOKEN. It is registered as an
 	// API-key principal with torque.* so it keeps working under enforce.
