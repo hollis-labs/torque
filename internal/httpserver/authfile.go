@@ -3,8 +3,10 @@ package httpserver
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,12 +15,21 @@ import (
 )
 
 // AuthFileName is the optional auth configuration file inside Torque's config
-// directory. When it exists it REPLACES the TORQUE_AUTH_* environment as the
-// source of the mode and the JWT / deny-list settings, and `torque serve`
-// re-reads it on an edit or SIGHUP (Auth.Watch). Without it nothing changes:
-// the environment is read once at startup, as before.
+// directory. Precedence:
 //
-//	mode: enforce            # off | permissive | enforce; HOLLIS_AUTH_TORQUE / HOLLIS_AUTH apply when absent
+//   - No file: TORQUE_AUTH_* (JWT / deny-list) and HOLLIS_AUTH_TORQUE /
+//     HOLLIS_AUTH (mode) are read once at startup, as before.
+//   - File present: it REPLACES the TORQUE_AUTH_* variables completely (an
+//     absent key means unset, not "fall back to the variable"). The mode is the
+//     file's `mode` when set; when it is absent or the file is empty the
+//     posture dial HOLLIS_AUTH_TORQUE / HOLLIS_AUTH applies, else off. The
+//     dial stays an environment-level control on purpose, so an empty file
+//     cannot silently relax a deployment that sets HOLLIS_AUTH_TORQUE=enforce.
+//
+// `torque serve` re-reads the file on an edit or SIGHUP (Auth.Watch). The file
+// must not be group- or world-writable, at startup and on every reload.
+//
+//	mode: enforce            # off | permissive | enforce
 //	jwt:
 //	  issuer: https://tether.example
 //	  audience: torque       # default torque
@@ -47,12 +58,25 @@ type authFile struct {
 // LoadAuthFile reads path. exists is false (and the error nil) when the file is
 // absent. Unknown keys are an error: a typo must not silently drop a setting.
 func LoadAuthFile(path string) (cfg AuthConfig, exists bool, err error) {
-	b, err := os.ReadFile(path) // #nosec G304 -- operator-configured path
+	f0, err := os.Open(path) // #nosec G304 -- operator-configured path
 	if os.IsNotExist(err) {
 		return AuthConfig{}, false, nil
 	}
 	if err != nil {
-		return AuthConfig{}, true, err
+		return AuthConfig{}, true, fmt.Errorf("%s: %w", AuthFileName, err)
+	}
+	defer func() { _ = f0.Close() }()
+	// Checked on the open file, so the file that is read is the file that was checked.
+	fi, err := f0.Stat()
+	if err != nil {
+		return AuthConfig{}, true, fmt.Errorf("%s: %w", AuthFileName, err)
+	}
+	if fi.Mode().Perm()&0o022 != 0 {
+		return AuthConfig{}, true, fmt.Errorf("%s: refusing a group- or world-writable file (mode %04o); chmod go-w", AuthFileName, fi.Mode().Perm())
+	}
+	b, err := io.ReadAll(io.LimitReader(f0, 64<<10))
+	if err != nil {
+		return AuthConfig{}, true, fmt.Errorf("%s: %w", AuthFileName, err)
 	}
 	var f authFile
 	dec := yaml.NewDecoder(strings.NewReader(string(b)))
@@ -94,4 +118,42 @@ func (a *Auth) Reloader(path string, interval time.Duration, logger *slog.Logger
 // Watch runs the Reloader until ctx is done.
 func (a *Auth) Watch(ctx context.Context, path string, interval time.Duration, logger *slog.Logger) {
 	_ = a.Reloader(path, interval, logger).Run(ctx)
+}
+
+// LoadAuthConfig is the startup configuration: auth.yaml in configDir when it
+// exists (replacing TORQUE_AUTH_*), else the TORQUE_AUTH_* variables. file is
+// the path when the config came from it, else "".
+func LoadAuthConfig(configDir string, getenv func(string) string) (cfg AuthConfig, file string, err error) {
+	path := filepath.Join(configDir, AuthFileName)
+	fileCfg, exists, err := LoadAuthFile(path)
+	if err != nil {
+		return AuthConfig{}, path, err
+	}
+	if exists {
+		return fileCfg, path, nil
+	}
+	e := func(k string) string { return strings.TrimSpace(getenv(k)) }
+	return AuthConfig{
+		Issuer: e("TORQUE_AUTH_ISSUER"), Audience: e("TORQUE_AUTH_AUDIENCE"), JWKSURL: e("TORQUE_AUTH_JWKS_URL"),
+		BootstrapKeyFile: e("TORQUE_AUTH_BOOTSTRAP_KEY_FILE"), DenyListURL: e("TORQUE_AUTH_DENYLIST_URL"),
+	}, "", nil
+}
+
+// StartAuth is what `torque serve` runs: it resolves the configuration (see
+// AuthFileName), adds the startup-only inputs (static token, listener) and
+// builds the Auth. An error from a file-derived configuration names the file.
+func StartAuth(ctx context.Context, configDir string, getenv func(string) string, staticToken, addr string, logger *slog.Logger) (a *Auth, file string, err error) {
+	cfg, file, err := LoadAuthConfig(configDir, getenv)
+	if err != nil {
+		return nil, file, fmt.Errorf("auth: %w", err)
+	}
+	cfg.StaticToken, cfg.Addr, cfg.Logger = staticToken, addr, logger
+	a, err = NewAuth(ctx, cfg)
+	if err != nil {
+		if file != "" {
+			return nil, file, fmt.Errorf("auth (from %s): %w", file, err)
+		}
+		return nil, file, fmt.Errorf("auth: %w", err)
+	}
+	return a, file, nil
 }

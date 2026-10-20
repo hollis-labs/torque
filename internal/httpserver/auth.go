@@ -44,8 +44,13 @@ type AuthConfig struct {
 	// StaticToken is the legacy TORQUE_API_TOKEN. It is registered as an
 	// API-key principal with torque.* so it keeps working under enforce.
 	StaticToken string
-	Audit       func(auth.Event)
-	Logger      *slog.Logger
+	// Addr is the listen address. It does not change how Torque starts (the
+	// token-gated non-loopback rule in ValidateBind still governs startup), but
+	// a reload may not relax the mode (enforce -> permissive/off, permissive ->
+	// off) on a listener that is not loopback or tailnet.
+	Addr   string
+	Audit  func(auth.Event)
+	Logger *slog.Logger
 }
 
 // reloadFetchTimeout bounds the first JWKS / deny-list fetch a reload requires.
@@ -62,6 +67,7 @@ type Auth struct {
 
 	base   context.Context
 	static string // TORQUE_API_TOKEN / --token: a startup input, kept across reloads
+	addr   string // the listener, a startup input: bounds what a reload may relax
 	scopes *auth.ScopeTable
 
 	mu  sync.Mutex // serializes Reload
@@ -102,7 +108,7 @@ func NewGuard(ctx context.Context, c AuthConfig) (*auth.Guard, error) {
 
 // NewAuth is NewGuard plus the handle Reload and Watch need.
 func NewAuth(ctx context.Context, c AuthConfig) (*Auth, error) {
-	a := &Auth{base: ctx, static: c.StaticToken, scopes: scopeTable()}
+	a := &Auth{base: ctx, static: c.StaticToken, addr: c.Addr, scopes: scopeTable()}
 	gen, err := a.build(c, nil)
 	if err != nil {
 		return nil, err
@@ -127,6 +133,9 @@ func NewAuth(ctx context.Context, c AuthConfig) (*Auth, error) {
 func (a *Auth) Reload(c AuthConfig) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if err := a.checkRelaxation(c); err != nil {
+		return fmt.Errorf("auth reload: %w", err)
+	}
 	next, err := a.build(c, a.cur)
 	if err != nil {
 		return fmt.Errorf("auth reload: %w", err)
@@ -145,6 +154,35 @@ func (a *Auth) Reload(c AuthConfig) error {
 	}
 	if next.denyStop == nil && prev.denyList == next.denyList {
 		next.denyStop = prev.denyStop // the shared list keeps its one poller
+	}
+	return nil
+}
+
+func modeRank(m auth.Mode) int {
+	switch m {
+	case auth.ModeEnforce:
+		return 2
+	case auth.ModePermissive:
+		return 1
+	}
+	return 0
+}
+
+// checkRelaxation refuses a reload that would weaken the mode on a listener
+// that is not loopback or tailnet. Relaxing on loopback is allowed (the
+// guard logs a WARN naming the old and new mode when it is applied). It runs
+// before anything is built or started.
+func (a *Auth) checkRelaxation(c AuthConfig) error {
+	next, err := resolveMode(c)
+	if err != nil {
+		return err
+	}
+	cur := a.Guard.Mode()
+	if a.addr == "" || modeRank(next) >= modeRank(cur) {
+		return nil
+	}
+	if err := auth.ValidateBind(a.addr, next); err != nil {
+		return fmt.Errorf("refusing to relax %s to %s on this listener (restart to change it): %w", cur, next, err)
 	}
 	return nil
 }

@@ -16,7 +16,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   its first fetch), a failed reload changes nothing, and a reload never forgets
   a revocation (the deny-list is kept while its URL is unchanged; a new URL needs
   a validated first fetch). Requests are pinned to the mode and verifier they
-  started under. No change without the file. `security/auth` is now v0.2.1.
+  started under. A reload cannot relax the mode on a non-loopback/tailnet
+  listener; an allowed relaxation is logged; `auth.yaml` must not be group- or
+  world-writable; with the file present `TORQUE_AUTH_*` is ignored and an absent
+  `mode` falls to the `HOLLIS_AUTH_TORQUE` / `HOLLIS_AUTH` dial, else off.
+  No change without the file. `security/auth` is now v0.2.1.
 - Auth dial and service tokens documented and tested (CW-20261020-0003).
   `SECURITY.md` lists the `HOLLIS_AUTH_TORQUE` / `HOLLIS_AUTH` dial and the
   `TORQUE_AUTH_*` variables and what each mode admits. Tests prove a
