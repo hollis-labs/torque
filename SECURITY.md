@@ -73,6 +73,27 @@ Torque is designed as a local-first tool for one operator on one machine.
   profile grants. Review profiles and task definitions from untrusted sources
   before dispatching them.
 
+## Tether-issued tokens and the posture dial
+
+`torque serve` can verify Tether JWTs offline (go-auth, `libs/security/auth`) next to the static `TORQUE_API_TOKEN`. Torque never calls Tether to authenticate a request; it checks signatures against the issuer's published keys and polls the issuer's deny-list.
+
+| Variable | Meaning |
+| --- | --- |
+| `HOLLIS_AUTH_TORQUE` | the posture dial for Torque: `off`, `permissive` (alias `observe`) or `enforce`. Falls back to `HOLLIS_AUTH`; the per-app variable wins. Default `off`. An invalid value stops startup. |
+| `TORQUE_AUTH_ISSUER` | Tether base URL, also the required `iss`. Setting it turns JWT verification on. |
+| `TORQUE_AUTH_AUDIENCE` | required `aud`; default `torque`. |
+| `TORQUE_AUTH_JWKS_URL` | default `<issuer>/.well-known/jwks.json`. |
+| `TORQUE_AUTH_BOOTSTRAP_KEY_FILE` | PEM public key or JWKS file used until the first JWKS fetch succeeds. |
+| `TORQUE_AUTH_DENYLIST_URL` | default `<issuer>/auth/denylist`. Polled every 30s. |
+
+What each mode does:
+
+- `off` (default): the rules above are unchanged. A request that presents a valid JWT with the needed scope (`torque.read` for GET/HEAD, `torque.write` otherwise) is admitted and attributed; every other request is decided by the loopback / `TORQUE_API_TOKEN` rules.
+- `permissive`: as `off`, and anything `enforce` would have refused is logged as "would deny".
+- `enforce`: only a valid JWT with the needed scope, or the static token (which carries `torque.*`), is admitted. Anonymous callers get 401, an under-scoped token 403. `/mcp` needs a valid token at the transport and each tool call is scoped separately.
+
+**Service tokens.** A dev service token is a Tether JWT with `kind=service`, `aud=torque`, scopes such as `torque.read torque.write` and an `exp` about ten years away (the verifier requires `exp`, so "no expiry" is a distant one). It needs no refresher. Revoke it by putting its `jti` on Tether's deny-list: Torque rejects it after its next successful deny-list poll (every 30s by default). A failed poll keeps the previous list, so while the issuer's deny-list is unreachable a revoked token stays valid. Keep `TORQUE_API_TOKEN` configured as a fallback until the service token is proven.
+
 ## External session launch paths
 
 `torque_session_create` / `torque_session_launch` over stdio or `/mcp`, and

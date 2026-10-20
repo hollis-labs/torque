@@ -13,6 +13,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -247,4 +249,168 @@ func TestGuardJWT_VerifiedTokenAdmittedUnderLegacyTokenAndEnforce(t *testing.T) 
 			assert.Equal(t, http.StatusForbidden, do(t, "POST", ts.URL+"/api/v1/tasks", bearer(mint("torque", "torque.read"))).StatusCode)
 		}
 	}
+}
+
+// guardContext is a lifecycle for NewGuard's background loops, stopped when the
+// test ends so none outlives it.
+func guardContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return ctx
+}
+
+// doJSON sends a JSON body with the given headers.
+func doJSON(t *testing.T, method, url, body string, headers map[string]string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+// jwtIssuer signs test tokens the way Tether does (EdDSA, aud=torque) and
+// writes the public key where AuthConfig.BootstrapKeyFile can read it.
+type jwtIssuer struct {
+	priv    ed25519.PrivateKey
+	keyFile string
+}
+
+func newJWTIssuer(t *testing.T) *jwtIssuer {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	require.NoError(t, err)
+	keyFile := filepath.Join(t.TempDir(), "issuer.pub.pem")
+	require.NoError(t, os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}), 0o600))
+	return &jwtIssuer{priv: priv, keyFile: keyFile}
+}
+
+func (i *jwtIssuer) mint(claims map[string]any) string {
+	enc := func(v any) string { b, _ := json.Marshal(v); return base64.RawURLEncoding.EncodeToString(b) }
+	in := enc(map[string]any{"alg": "EdDSA", "typ": "JWT"}) + "." + enc(claims)
+	return in + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(i.priv, []byte(in)))
+}
+
+// serviceToken is a dev service token: kind=service, no session, an exp about
+// ten years out (go-auth rejects a token without exp, so "no expiry" is a
+// distant exp), revocable by jti through the issuer's deny-list.
+func (i *jwtIssuer) serviceToken(scope, jti string) string {
+	return i.mint(map[string]any{
+		"iss": "https://tether.test", "sub": "msg://service/local/agent-os", "aud": "torque", "scope": scope,
+		"kind": "service", "jti": jti, "exp": time.Now().Add(10 * 365 * 24 * time.Hour).Unix()})
+}
+
+func TestGuardServiceToken_AdmittedAndScopedInEveryMode(t *testing.T) {
+	iss := newJWTIssuer(t)
+	read := iss.serviceToken("torque.read", "svc-read")
+	write := iss.serviceToken("torque.read torque.write", "svc-write")
+	bearer := func(tok string) map[string]string { return map[string]string{"Authorization": "Bearer " + tok} }
+	const body = `{"title":"created by a service token"}`
+	for _, mode := range []auth.Mode{auth.ModeOff, auth.ModePermissive, auth.ModeEnforce} {
+		// Bootstrap-key only: no issuer URL, so no JWKS fetch or other outbound call.
+		g, err := httpserver.NewGuard(guardContext(t), httpserver.AuthConfig{Mode: mode, BootstrapKeyFile: iss.keyFile, StaticToken: "s3cret"})
+		require.NoError(t, err)
+		ts := setupSecuredServer(t, httpserver.Security{Token: "s3cret", Guard: g})
+		assert.Equal(t, http.StatusOK, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(read)).StatusCode, "read, %s", mode)
+		assert.Equal(t, http.StatusOK, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(write)).StatusCode, "write token reads, %s", mode)
+
+		// A read-only service token never writes: enforce refuses it, and
+		// off/permissive fall back to the legacy token gate, which it fails.
+		wantDenied := http.StatusUnauthorized
+		if mode == auth.ModeEnforce {
+			wantDenied = http.StatusForbidden
+		}
+		assert.Equal(t, wantDenied, doJSON(t, "POST", ts.URL+"/api/v1/tasks", body, bearer(read)).StatusCode, "read token writes, %s", mode)
+
+		// A write-scoped service token creates a task: one request, a concrete result.
+		resp := doJSON(t, "POST", ts.URL+"/api/v1/tasks", body, bearer(write))
+		require.Equal(t, http.StatusCreated, resp.StatusCode, "write token, %s", mode)
+		var created struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+		assert.NotEmpty(t, created.ID, mode)
+		assert.Equal(t, "created by a service token", created.Title, mode)
+		got := do(t, "GET", ts.URL+"/api/v1/tasks/"+created.ID, bearer(read))
+		assert.Equal(t, http.StatusOK, got.StatusCode, "the created task is readable, %s", mode)
+	}
+}
+
+// Revocation is eventual: the token is rejected after a deny-list poll that
+// succeeds and lists its jti. The short interval keeps the test fast; it is not
+// asserted as a bound (a failed poll keeps the previous list).
+func TestGuardServiceToken_RevokedByDenyListOnNextSuccessfulPoll(t *testing.T) {
+	iss := newJWTIssuer(t)
+	tok := iss.serviceToken("torque.read torque.write", "svc-1")
+	var denied atomic.Bool
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/auth/denylist" {
+			http.NotFound(w, r)
+			return
+		}
+		doc := auth.DenyListDoc{JTI: []string{}, Sub: []string{}, SID: []string{}}
+		if denied.Load() {
+			doc.JTI = []string{"svc-1"}
+		}
+		_ = json.NewEncoder(w).Encode(doc)
+	}))
+	defer issuer.Close()
+	g, err := httpserver.NewGuard(guardContext(t), httpserver.AuthConfig{
+		Mode: auth.ModeEnforce, BootstrapKeyFile: iss.keyFile,
+		DenyListURL: issuer.URL + "/auth/denylist", DenyListInterval: 25 * time.Millisecond})
+	require.NoError(t, err)
+	ts := setupSecuredServer(t, httpserver.Security{Guard: g})
+	bearer := map[string]string{"Authorization": "Bearer " + tok}
+	require.Equal(t, http.StatusOK, do(t, "GET", ts.URL+"/api/v1/tasks", bearer).StatusCode)
+
+	denied.Store(true) // the issuer revokes the token
+	require.Eventually(t, func() bool {
+		return do(t, "GET", ts.URL+"/api/v1/tasks", bearer).StatusCode == http.StatusUnauthorized
+	}, 5*time.Second, 20*time.Millisecond, "revoked service token still accepted after the deny-list listed it")
+}
+
+func TestGuardServiceToken_WrongAudienceAndMissingExpRefused(t *testing.T) {
+	iss := newJWTIssuer(t)
+	g, err := httpserver.NewGuard(guardContext(t), httpserver.AuthConfig{Mode: auth.ModeEnforce, BootstrapKeyFile: iss.keyFile})
+	require.NoError(t, err)
+	ts := setupSecuredServer(t, httpserver.Security{Guard: g})
+	bearer := func(tok string) map[string]string { return map[string]string{"Authorization": "Bearer " + tok} }
+	other := iss.mint(map[string]any{"iss": "https://tether.test", "sub": "svc", "aud": "tesseract", "scope": "torque.read",
+		"kind": "service", "jti": "j", "exp": time.Now().Add(time.Hour).Unix()})
+	noExp := iss.mint(map[string]any{"iss": "https://tether.test", "sub": "svc", "aud": "torque", "scope": "torque.read",
+		"kind": "service", "jti": "j"})
+	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(other)).StatusCode)
+	assert.Equal(t, http.StatusUnauthorized, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(noExp)).StatusCode)
+}
+
+func TestNewGuard_DialFromEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		name, perApp, global string
+		want                 auth.Mode
+	}{
+		{"default is off", "", "", auth.ModeOff},
+		{"global applies", "", "enforce", auth.ModeEnforce},
+		{"per-app wins over global", "permissive", "enforce", auth.ModePermissive},
+		{"observe is permissive", "observe", "", auth.ModePermissive},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOLLIS_AUTH_TORQUE", tc.perApp)
+			t.Setenv("HOLLIS_AUTH", tc.global)
+			g, err := httpserver.NewGuard(guardContext(t), httpserver.AuthConfig{StaticToken: "s3cret"})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, g.Mode())
+		})
+	}
+	t.Setenv("HOLLIS_AUTH_TORQUE", "bogus")
+	_, err := httpserver.NewGuard(context.Background(), httpserver.AuthConfig{})
+	assert.Error(t, err, "an invalid dial value must not silently fall back")
 }

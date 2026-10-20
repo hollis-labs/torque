@@ -8,6 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Auth dial and service tokens documented and tested (CW-20261020-0003).
+  `SECURITY.md` lists the `HOLLIS_AUTH_TORQUE` / `HOLLIS_AUTH` dial and the
+  `TORQUE_AUTH_*` variables and what each mode admits. Tests prove a
+  `kind=service` JWT with a distant `exp` is admitted and scoped in off,
+  permissive and enforce, is refused for the wrong audience or no `exp`, and
+  is rejected after its `jti` appears on the deny-list. `AuthConfig` gains
+  `DenyListInterval` (default 30s, unchanged) so the revocation bound is
+  testable and tunable.
 - Task ids are never handed out twice (CW-20261016-0251). `NextTaskID` used the
   day's current MAX, so deleting the newest task and creating another reissued
   its `CW-YYYYMMDD-NNNN`; with `event_outbox` keeping history by task id that
