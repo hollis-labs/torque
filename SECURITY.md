@@ -92,7 +92,7 @@ What each mode does:
 - `permissive`: as `off`, and anything `enforce` would have refused is logged as "would deny".
 - `enforce`: only a valid JWT with the needed scope, or the static token (which carries `torque.*`), is admitted. Anonymous callers get 401, an under-scoped token 403. `/mcp` needs a valid token at the transport and each tool call is scoped separately.
 
-**Service tokens.** A dev service token is a Tether JWT with `kind=service`, `aud=torque`, scopes such as `torque.read torque.write` and an `exp` about ten years away (the verifier requires `exp`, so "no expiry" is a distant one). It needs no refresher. Revoke it by putting its `jti` on Tether's deny-list: Torque rejects it after its next poll, at most 30s later. Keep `TORQUE_API_TOKEN` configured as a fallback until the service token is proven.
+**Service tokens.** A dev service token is a Tether JWT with `kind=service`, `aud=torque`, scopes such as `torque.read torque.write` and an `exp` about ten years away (the verifier requires `exp`, so "no expiry" is a distant one). It needs no refresher. Revoke it by putting its `jti` on Tether's deny-list: Torque rejects it after its next successful deny-list poll (every 30s by default). A failed poll keeps the previous list, so while the issuer's deny-list is unreachable a revoked token stays valid. Keep `TORQUE_API_TOKEN` configured as a fallback until the service token is proven.
 
 ## External session launch paths
 
