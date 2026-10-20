@@ -3,6 +3,7 @@ package httpserver_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -405,4 +406,84 @@ func TestExplicitEmptyKeyClearsAnInheritedValueButAnOmittedKeyInherits(t *testin
 	r := a.Reloader(filepath.Join(dir, httpserver.AuthFileName), 0, slog.New(slog.NewTextHandler(&syncBuf{}, nil)))
 	require.NoError(t, r.Load(context.Background()))
 	assert.Equal(t, http.StatusUnauthorized, listTasks(t, ts, tok), "cleared after the reload")
+}
+
+// Every string key is presence-aware: omitted inherits TORQUE_AUTH_*, written
+// empty clears it, written non-empty overrides it. Mode is the exception: an
+// empty mode inherits the dial, and an explicit "off" selects off.
+func TestEveryStringKeyIsPresenceAware(t *testing.T) {
+	t.Setenv("HOLLIS_AUTH", "")
+	t.Setenv("HOLLIS_AUTH_TORQUE", "")
+	env := map[string]string{
+		"TORQUE_AUTH_ISSUER": "https://env.example", "TORQUE_AUTH_AUDIENCE": "env-aud", "TORQUE_AUTH_JWKS_URL": "https://env.example/jwks",
+		"TORQUE_AUTH_BOOTSTRAP_KEY_FILE": "/env/key.pem", "TORQUE_AUTH_DENYLIST_URL": "https://env.example/deny",
+	}
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	type keyCase struct {
+		name, yaml string
+		get        func(httpserver.AuthConfig) string
+		envVal     string
+	}
+	keys := []keyCase{
+		{"issuer", "jwt:\n  issuer: %s\n", func(c httpserver.AuthConfig) string { return c.Issuer }, env["TORQUE_AUTH_ISSUER"]},
+		{"audience", "jwt:\n  audience: %s\n", func(c httpserver.AuthConfig) string { return c.Audience }, env["TORQUE_AUTH_AUDIENCE"]},
+		{"jwks_url", "jwt:\n  jwks_url: %s\n", func(c httpserver.AuthConfig) string { return c.JWKSURL }, env["TORQUE_AUTH_JWKS_URL"]},
+		{"bootstrap_key_file", "jwt:\n  bootstrap_key_file: %s\n", func(c httpserver.AuthConfig) string { return c.BootstrapKeyFile }, env["TORQUE_AUTH_BOOTSTRAP_KEY_FILE"]},
+		{"deny_list.url", "deny_list:\n  url: %s\n", func(c httpserver.AuthConfig) string { return c.DenyListURL }, env["TORQUE_AUTH_DENYLIST_URL"]},
+	}
+	for _, k := range keys {
+		load := func(body string) httpserver.AuthConfig {
+			dir := t.TempDir()
+			writeAuthFile(t, dir, body)
+			cfg, file, err := httpserver.LoadAuthConfig(dir, os.Getenv)
+			require.NoError(t, err, k.name)
+			require.NotEmpty(t, file)
+			return cfg
+		}
+		assert.Equal(t, k.envVal, k.get(load("mode: off\n")), "%s: omitted inherits", k.name)
+		assert.Equal(t, k.envVal, k.get(load(fmt.Sprintf(k.yaml, "null"))), "%s: null inherits", k.name)
+		assert.Equal(t, "", k.get(load(fmt.Sprintf(k.yaml, `""`))), "%s: written empty clears", k.name)
+		assert.Equal(t, "", k.get(load(fmt.Sprintf(k.yaml, `''`))), "%s: written empty (single quotes) clears", k.name)
+		assert.Equal(t, "file-value", k.get(load(fmt.Sprintf(k.yaml, "file-value"))), "%s: written value overrides", k.name)
+	}
+
+	t.Setenv("HOLLIS_AUTH_TORQUE", "enforce")
+	load := func(body string) httpserver.AuthConfig {
+		dir := t.TempDir()
+		writeAuthFile(t, dir, body)
+		cfg, _, err := httpserver.LoadAuthConfig(dir, os.Getenv)
+		require.NoError(t, err)
+		return cfg
+	}
+	assert.Equal(t, auth.Mode(""), load("mode: \"\"\n").Mode, "an empty mode is not set: the dial applies")
+	assert.Equal(t, "env HOLLIS_AUTH_TORQUE", load("mode: \"\"\n").ModeSource)
+	assert.Equal(t, auth.ModeOff, load("mode: off\n").Mode, "an explicit off selects off (subject to the relaxation checks)")
+	assert.Equal(t, httpserver.AuthFileName, load("mode: off\n").ModeSource)
+}
+
+// A tailnet-style bind through the wiring also accepts a same-mode reload (key
+// rotation) — only loosening is refused.
+func TestTailnetBindAcceptsASameModeReloadThroughTheServeWiring(t *testing.T) {
+	t.Setenv("HOLLIS_AUTH", "")
+	t.Setenv("HOLLIS_AUTH_TORQUE", "")
+	one, two := newJWTIssuer(t), newJWTIssuer(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, httpserver.AuthFileName)
+	writeAuthFile(t, dir, "mode: enforce\njwt:\n  bootstrap_key_file: "+one.keyFile+"\n")
+	a, _, err := httpserver.StartAuth(guardContext(t), dir, os.Getenv, "s3cret", "100.101.102.103:7777", slog.New(slog.NewTextHandler(&syncBuf{}, nil)))
+	require.NoError(t, err)
+	ts := setupSecuredServer(t, httpserver.Security{Token: "s3cret", Guard: a.Guard})
+	require.Equal(t, http.StatusOK, listTasks(t, ts, one.serviceToken("torque.read", "svc-1")))
+
+	writeAuthFile(t, dir, "mode: enforce\njwt:\n  bootstrap_key_file: "+two.keyFile+"\n")
+	r := a.Reloader(path, 0, slog.New(slog.NewTextHandler(&syncBuf{}, nil)))
+	require.NoError(t, r.Load(context.Background()), "same mode is not a loosening")
+	assert.Equal(t, http.StatusOK, listTasks(t, ts, two.serviceToken("torque.read", "svc-2")), "the rotated key")
+	assert.Equal(t, http.StatusUnauthorized, listTasks(t, ts, one.serviceToken("torque.read", "svc-1")))
+
+	writeAuthFile(t, dir, "mode: permissive\njwt:\n  bootstrap_key_file: "+two.keyFile+"\n")
+	require.Error(t, r.Load(context.Background()), "loosening on 100.x")
+	assert.Equal(t, auth.ModeEnforce, a.Guard.Mode())
 }
