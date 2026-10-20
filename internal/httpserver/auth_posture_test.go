@@ -328,3 +328,40 @@ func TestAuthReloadMayOnlyRelaxOnLoopback(t *testing.T) {
 		}
 	}
 }
+
+// Through the serve wiring (StartAuth + Watch + auth.yaml): a tailnet-style bind
+// may start in any mode, may be tightened by an edit, and may not be loosened by
+// one; the refusal is logged and the last good configuration stays.
+func TestTailnetBindThroughTheServeWiringTightensButNeverLoosens(t *testing.T) {
+	t.Setenv("HOLLIS_AUTH", "")
+	t.Setenv("HOLLIS_AUTH_TORQUE", "")
+	i := newJWTIssuer(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, httpserver.AuthFileName)
+	keyed := func(mode string) {
+		writeAuthFile(t, dir, "mode: "+mode+"\njwt:\n  bootstrap_key_file: "+i.keyFile+"\n")
+	}
+	keyed("permissive") // the legacy token-gated non-loopback start
+	logs := &syncBuf{}
+	lg := slog.New(slog.NewTextHandler(logs, nil))
+	a, _, err := httpserver.StartAuth(guardContext(t), dir, os.Getenv, "s3cret", "100.64.1.2:7777", lg)
+	require.NoError(t, err, "startup bind posture is unchanged")
+	require.Equal(t, auth.ModePermissive, a.Guard.Mode())
+
+	ctx, cancel := context.WithCancel(guardContext(t))
+	done := make(chan struct{})
+	go func() { a.Watch(ctx, path, 10*time.Millisecond, lg); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	time.Sleep(60 * time.Millisecond)
+
+	keyed("enforce") // tightening is allowed
+	require.Eventually(t, func() bool { return a.Guard.Mode() == auth.ModeEnforce }, 5*time.Second, 20*time.Millisecond)
+
+	keyed("off") // loosening is refused, logged, last good kept
+	require.Eventually(t, func() bool { return strings.Contains(logs.String(), "keeping previous configuration") }, 5*time.Second, 20*time.Millisecond)
+	assert.Equal(t, auth.ModeEnforce, a.Guard.Mode())
+	out := logs.String()
+	assert.Contains(t, out, "level=WARN")
+	assert.Contains(t, out, "not loopback")
+	assert.NotContains(t, out, "to=off", "the refused mode must not have been applied")
+}
