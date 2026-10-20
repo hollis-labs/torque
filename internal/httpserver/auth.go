@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"strings"
 	"sync"
@@ -47,7 +48,7 @@ type AuthConfig struct {
 	// Addr is the listen address. It does not change how Torque starts (the
 	// token-gated non-loopback rule in ValidateBind still governs startup), but
 	// a reload may not relax the mode (enforce -> permissive/off, permissive ->
-	// off) on a listener that is not loopback or tailnet.
+	// off) on a listener that is not loopback (a tailnet address is not).
 	Addr string
 	// ModeSource and File say where Mode came from and which auth.yaml (if any)
 	// contributed, for the log line naming the effective mode. Informational.
@@ -193,7 +194,7 @@ func modeRank(m auth.Mode) int {
 }
 
 // checkRelaxation refuses a reload that would weaken the mode on a listener
-// that is not loopback or tailnet. Relaxing on loopback is allowed (the
+// that is not loopback (tailnet included). Relaxing on loopback is allowed (the
 // guard logs a WARN naming the old and new mode when it is applied). It runs
 // before anything is built or started.
 func (a *Auth) checkRelaxation(c AuthConfig) error {
@@ -205,10 +206,29 @@ func (a *Auth) checkRelaxation(c AuthConfig) error {
 	if a.addr == "" || modeRank(next) >= modeRank(cur) {
 		return nil
 	}
-	if err := auth.ValidateBind(a.addr, next); err != nil {
-		return fmt.Errorf("refusing to relax %s to %s on this listener (restart to change it): %w", cur, next, err)
+	if !loopbackListener(a.addr) {
+		return fmt.Errorf("refusing to relax %s to %s: the listener is not loopback (a reload may only relax on loopback; restart to change it)", cur, next)
 	}
 	return nil
+}
+
+// loopbackListener is true for a unix socket, localhost or a loopback IP. It is
+// deliberately stricter than auth.ValidateBind, which also admits tailnet
+// addresses: a reload may only relax auth where nothing but the local machine
+// can reach the listener. An address that does not parse is not loopback.
+func loopbackListener(addr string) bool {
+	if strings.HasPrefix(addr, "unix:") || strings.HasPrefix(addr, "/") {
+		return true
+	}
+	host, _, err := net.SplitHostPort(strings.TrimPrefix(addr, "tcp:"))
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
 }
 
 // resolveMode is the configured mode, else HOLLIS_AUTH_TORQUE / HOLLIS_AUTH,

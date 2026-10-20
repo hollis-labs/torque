@@ -43,7 +43,7 @@ func TestAuthReloadMayNotRelaxOnANonLoopbackListener(t *testing.T) {
 		c.Addr = "0.0.0.0:7777"
 		err := a.Reload(c)
 		require.Error(t, err, "relaxing to %s on 0.0.0.0", to)
-		assert.Contains(t, err.Error(), "non-loopback")
+		assert.Contains(t, err.Error(), "not loopback")
 		assert.Equal(t, auth.ModeEnforce, a.Guard.Mode())
 		assert.Equal(t, http.StatusUnauthorized, listTasks(t, ts, ""), "no token is still refused after the refused reload")
 		assert.Equal(t, http.StatusOK, listTasks(t, ts, tok), "the JWT verifier is unchanged")
@@ -307,4 +307,24 @@ func TestRemovingTheFileCannotRelaxANonLoopbackListener(t *testing.T) {
 	r := a.Reloader(path, 0, slog.New(slog.NewTextHandler(&syncBuf{}, nil)))
 	require.Error(t, r.Load(context.Background()), "falling back to the (unset) dial would be off")
 	assert.Equal(t, auth.ModeEnforce, a.Guard.Mode())
+}
+
+func TestAuthReloadMayOnlyRelaxOnLoopback(t *testing.T) {
+	for addr, allowed := range map[string]bool{
+		"127.0.0.1:7777": true, "localhost:7777": true, "[::1]:7777": true, "tcp:127.0.0.1:7777": true, "unix:/tmp/torque.sock": true,
+		"100.64.1.2:7777": false, "host.tail1234.ts.net:7777": false, "0.0.0.0:7777": false, ":7777": false, "10.0.0.5:7777": false, "garbage": false,
+	} {
+		i := newJWTIssuer(t)
+		cfg := i.cfg(auth.ModeEnforce)
+		cfg.Addr = addr
+		a, _ := newAuthServer(t, cfg)
+		err := a.Reload(i.cfg(auth.ModePermissive))
+		if allowed {
+			assert.NoError(t, err, addr)
+			assert.Equal(t, auth.ModePermissive, a.Guard.Mode(), addr)
+		} else {
+			assert.Error(t, err, addr)
+			assert.Equal(t, auth.ModeEnforce, a.Guard.Mode(), addr)
+		}
+	}
 }

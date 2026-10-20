@@ -15,8 +15,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   its first fetch), a failed reload changes nothing, and a reload never forgets
   a revocation (the deny-list is kept while its URL is unchanged; a new URL needs
   a validated first fetch). Requests are pinned to the mode and verifier they
-  started under. A reload cannot relax the mode on a non-loopback/tailnet
-  listener; an allowed relaxation is logged; `auth.yaml` must not be group- or
+  started under. A reload cannot relax the mode on a non-loopback
+  listener (tailnet included); an allowed relaxation is logged; `auth.yaml` must not be group- or
   world-writable; precedence is per key (a key the file sets overrides the environment;
   what it omits, or an empty file, inherits `TORQUE_AUTH_*` and the
   `HOLLIS_AUTH_TORQUE` / `HOLLIS_AUTH` dial, else off; removing the file falls
