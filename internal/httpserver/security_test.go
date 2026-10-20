@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -250,6 +251,30 @@ func TestGuardJWT_VerifiedTokenAdmittedUnderLegacyTokenAndEnforce(t *testing.T) 
 	}
 }
 
+// guardContext is a lifecycle for NewGuard's background loops, stopped when the
+// test ends so none outlives it.
+func guardContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return ctx
+}
+
+// doJSON sends a JSON body with the given headers.
+func doJSON(t *testing.T, method, url, body string, headers map[string]string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(method, url, strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
 // jwtIssuer signs test tokens the way Tether does (EdDSA, aud=torque) and
 // writes the public key where AuthConfig.BootstrapKeyFile can read it.
 type jwtIssuer struct {
@@ -288,26 +313,42 @@ func TestGuardServiceToken_AdmittedAndScopedInEveryMode(t *testing.T) {
 	read := iss.serviceToken("torque.read", "svc-read")
 	write := iss.serviceToken("torque.read torque.write", "svc-write")
 	bearer := func(tok string) map[string]string { return map[string]string{"Authorization": "Bearer " + tok} }
+	const body = `{"title":"created by a service token"}`
 	for _, mode := range []auth.Mode{auth.ModeOff, auth.ModePermissive, auth.ModeEnforce} {
-		g, err := httpserver.NewGuard(context.Background(), httpserver.AuthConfig{
-			Mode: mode, Issuer: "https://tether.test", BootstrapKeyFile: iss.keyFile, StaticToken: "s3cret"})
+		// Bootstrap-key only: no issuer URL, so no JWKS fetch or other outbound call.
+		g, err := httpserver.NewGuard(guardContext(t), httpserver.AuthConfig{Mode: mode, BootstrapKeyFile: iss.keyFile, StaticToken: "s3cret"})
 		require.NoError(t, err)
 		ts := setupSecuredServer(t, httpserver.Security{Token: "s3cret", Guard: g})
 		assert.Equal(t, http.StatusOK, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(read)).StatusCode, "read, %s", mode)
 		assert.Equal(t, http.StatusOK, do(t, "GET", ts.URL+"/api/v1/tasks", bearer(write)).StatusCode, "write token reads, %s", mode)
+
 		// A read-only service token never writes: enforce refuses it, and
 		// off/permissive fall back to the legacy token gate, which it fails.
-		wantWrite := http.StatusUnauthorized
+		wantDenied := http.StatusUnauthorized
 		if mode == auth.ModeEnforce {
-			wantWrite = http.StatusForbidden
+			wantDenied = http.StatusForbidden
 		}
-		assert.Equal(t, wantWrite, do(t, "POST", ts.URL+"/api/v1/tasks", bearer(read)).StatusCode, "read token writes, %s", mode)
-		assert.NotEqual(t, http.StatusUnauthorized, do(t, "POST", ts.URL+"/api/v1/tasks", bearer(write)).StatusCode, "write token, %s", mode)
-		assert.NotEqual(t, http.StatusForbidden, do(t, "POST", ts.URL+"/api/v1/tasks", bearer(write)).StatusCode, "write token, %s", mode)
+		assert.Equal(t, wantDenied, doJSON(t, "POST", ts.URL+"/api/v1/tasks", body, bearer(read)).StatusCode, "read token writes, %s", mode)
+
+		// A write-scoped service token creates a task: one request, a concrete result.
+		resp := doJSON(t, "POST", ts.URL+"/api/v1/tasks", body, bearer(write))
+		require.Equal(t, http.StatusCreated, resp.StatusCode, "write token, %s", mode)
+		var created struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		}
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&created))
+		assert.NotEmpty(t, created.ID, mode)
+		assert.Equal(t, "created by a service token", created.Title, mode)
+		got := do(t, "GET", ts.URL+"/api/v1/tasks/"+created.ID, bearer(read))
+		assert.Equal(t, http.StatusOK, got.StatusCode, "the created task is readable, %s", mode)
 	}
 }
 
-func TestGuardServiceToken_RevokedByDenyListWithinPollInterval(t *testing.T) {
+// Revocation is eventual: the token is rejected after a deny-list poll that
+// succeeds and lists its jti. The short interval keeps the test fast; it is not
+// asserted as a bound (a failed poll keeps the previous list).
+func TestGuardServiceToken_RevokedByDenyListOnNextSuccessfulPoll(t *testing.T) {
 	iss := newJWTIssuer(t)
 	tok := iss.serviceToken("torque.read torque.write", "svc-1")
 	var denied atomic.Bool
@@ -323,10 +364,8 @@ func TestGuardServiceToken_RevokedByDenyListWithinPollInterval(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(doc)
 	}))
 	defer issuer.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	g, err := httpserver.NewGuard(ctx, httpserver.AuthConfig{
-		Mode: auth.ModeEnforce, Issuer: "https://tether.test", BootstrapKeyFile: iss.keyFile,
+	g, err := httpserver.NewGuard(guardContext(t), httpserver.AuthConfig{
+		Mode: auth.ModeEnforce, BootstrapKeyFile: iss.keyFile,
 		DenyListURL: issuer.URL + "/auth/denylist", DenyListInterval: 25 * time.Millisecond})
 	require.NoError(t, err)
 	ts := setupSecuredServer(t, httpserver.Security{Guard: g})
@@ -336,13 +375,12 @@ func TestGuardServiceToken_RevokedByDenyListWithinPollInterval(t *testing.T) {
 	denied.Store(true) // the issuer revokes the token
 	require.Eventually(t, func() bool {
 		return do(t, "GET", ts.URL+"/api/v1/tasks", bearer).StatusCode == http.StatusUnauthorized
-	}, 3*time.Second, 20*time.Millisecond, "revoked service token still accepted")
+	}, 5*time.Second, 20*time.Millisecond, "revoked service token still accepted after the deny-list listed it")
 }
 
 func TestGuardServiceToken_WrongAudienceAndMissingExpRefused(t *testing.T) {
 	iss := newJWTIssuer(t)
-	g, err := httpserver.NewGuard(context.Background(), httpserver.AuthConfig{
-		Mode: auth.ModeEnforce, Issuer: "https://tether.test", BootstrapKeyFile: iss.keyFile})
+	g, err := httpserver.NewGuard(guardContext(t), httpserver.AuthConfig{Mode: auth.ModeEnforce, BootstrapKeyFile: iss.keyFile})
 	require.NoError(t, err)
 	ts := setupSecuredServer(t, httpserver.Security{Guard: g})
 	bearer := func(tok string) map[string]string { return map[string]string{"Authorization": "Bearer " + tok} }
@@ -367,7 +405,7 @@ func TestNewGuard_DialFromEnvironment(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HOLLIS_AUTH_TORQUE", tc.perApp)
 			t.Setenv("HOLLIS_AUTH", tc.global)
-			g, err := httpserver.NewGuard(context.Background(), httpserver.AuthConfig{StaticToken: "s3cret"})
+			g, err := httpserver.NewGuard(guardContext(t), httpserver.AuthConfig{StaticToken: "s3cret"})
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, g.Mode())
 		})
