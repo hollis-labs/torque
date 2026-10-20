@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- **A relay from the state-event outbox to the event hub, off by default** (CW-20261020-0030). With `TORQUE_EVENTS_HUB=1` and `HOLLIS_EVENTS_URL` (and the app's token file, `HOLLIS_AUTH_TOKEN_FILE_TORQUE`) set, `torque serve` ships `event_outbox` to the hub through `mesh/eventbus` v0.2.0: in order, at least once, with the cursor kept in `event_outbox_cursors` per outbox generation and moved only over events the hub settled or the client durably quarantined. A down hub or a missing credential holds events back and loses none; a log trimmed past the cursor resumes at the trim point and logs the gap. The actor, record time and cursor are not sent (the hub owns them). SQLite only, like the SSE outbox reader. Nothing changes unless both are set; the client's spool and quarantine are under `<state dir>/events-hub`.
 - Auth settings reload without a restart (CW-20261019-0046, security/auth
   v0.2.1). An optional `auth.yaml` in the config directory sets the mode and the
   JWT / deny-list settings (over `TORQUE_AUTH_*`, per key) and is re-read on an edit or `SIGHUP`. All or nothing: the next
