@@ -220,7 +220,7 @@ func TestLoadAuthFile(t *testing.T) {
 	cfg, exists, err := httpserver.LoadAuthFile(empty)
 	require.NoError(t, err)
 	assert.True(t, exists)
-	assert.Equal(t, httpserver.AuthConfig{}, cfg)
+	assert.Equal(t, httpserver.AuthConfig{Mode: auth.ModeOff, ModeSource: "auth.yaml default"}, cfg, "an empty file resolves explicitly to off")
 
 	bad := filepath.Join(dir, "bad.yaml")
 	require.NoError(t, os.WriteFile(bad, []byte("mode: enforce\nissuer: typo-at-top-level\n"), 0o600))

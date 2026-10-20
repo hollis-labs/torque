@@ -48,9 +48,13 @@ type AuthConfig struct {
 	// token-gated non-loopback rule in ValidateBind still governs startup), but
 	// a reload may not relax the mode (enforce -> permissive/off, permissive ->
 	// off) on a listener that is not loopback or tailnet.
-	Addr   string
-	Audit  func(auth.Event)
-	Logger *slog.Logger
+	Addr string
+	// ModeSource says where Mode came from, for the log line that names the
+	// effective mode ("auth.yaml", "auth.yaml default"); empty means the
+	// environment dial.
+	ModeSource string
+	Audit      func(auth.Event)
+	Logger     *slog.Logger
 }
 
 // reloadFetchTimeout bounds the first JWKS / deny-list fetch a reload requires.
@@ -68,6 +72,7 @@ type Auth struct {
 	base   context.Context
 	static string // TORQUE_API_TOKEN / --token: a startup input, kept across reloads
 	addr   string // the listener, a startup input: bounds what a reload may relax
+	log    *slog.Logger
 	scopes *auth.ScopeTable
 
 	mu  sync.Mutex // serializes Reload
@@ -108,7 +113,11 @@ func NewGuard(ctx context.Context, c AuthConfig) (*auth.Guard, error) {
 
 // NewAuth is NewGuard plus the handle Reload and Watch need.
 func NewAuth(ctx context.Context, c AuthConfig) (*Auth, error) {
-	a := &Auth{base: ctx, static: c.StaticToken, addr: c.Addr, scopes: scopeTable()}
+	lg := c.Logger
+	if lg == nil {
+		lg = slog.Default()
+	}
+	a := &Auth{base: ctx, static: c.StaticToken, addr: c.Addr, scopes: scopeTable(), log: lg}
 	gen, err := a.build(c, nil)
 	if err != nil {
 		return nil, err
@@ -119,6 +128,7 @@ func NewAuth(ctx context.Context, c AuthConfig) (*Auth, error) {
 		return nil, err
 	}
 	a.Guard, a.cur = g, gen
+	a.logMode(c, gen.mode, "start")
 	return a, nil
 }
 
@@ -152,10 +162,28 @@ func (a *Auth) Reload(c AuthConfig) error {
 	if prev.denyStop != nil && prev.denyList != next.denyList {
 		prev.denyStop() // the old endpoint's poller and list are replaced
 	}
+	a.logMode(c, next.mode, "reload")
 	if next.denyStop == nil && prev.denyList == next.denyList {
 		next.denyStop = prev.denyStop // the shared list keeps its one poller
 	}
 	return nil
+}
+
+// logMode says which mode is in effect and where it came from, at WARN so a
+// mode-less auth.yaml (which resolves to off) or an ignored environment dial is
+// visible in the log.
+func (a *Auth) logMode(c AuthConfig, mode auth.Mode, when string) {
+	src := c.ModeSource
+	if src == "" {
+		src = "environment dial or default"
+	}
+	attrs := []any{"when", when, "mode", string(mode), "source", src}
+	if strings.HasPrefix(src, "auth.yaml") {
+		if dial, err := auth.ModeFromEnv(AuthApp, ""); err == nil && dial != "" && dial != mode {
+			attrs = append(attrs, "ignored_env_dial", string(dial))
+		}
+	}
+	a.log.Warn("auth mode in effect", attrs...)
 }
 
 func modeRank(m auth.Mode) int {
@@ -188,7 +216,7 @@ func (a *Auth) checkRelaxation(c AuthConfig) error {
 }
 
 // resolveMode is the configured mode, else HOLLIS_AUTH_TORQUE / HOLLIS_AUTH,
-// else off. An invalid value is an error, never a fall-through.
+// else off (a file-derived config always carries an explicit mode). An invalid value is an error, never a fall-through.
 func resolveMode(c AuthConfig) (auth.Mode, error) {
 	if c.Mode != "" {
 		return auth.ParseMode(string(c.Mode))

@@ -171,19 +171,24 @@ func TestStartAuthPrecedence(t *testing.T) {
 		assert.Equal(t, auth.ModePermissive, a.Guard.Mode())
 	})
 
-	t.Run("absent mode and an empty file use the dial, else off", func(t *testing.T) {
+	t.Run("absent mode and an empty file resolve explicitly to off, ignoring the dial, and say so", func(t *testing.T) {
 		for name, body := range map[string]string{"empty file": "", "no mode key": "jwt:\n  audience: torque\n"} {
 			dir := t.TempDir()
 			writeAuthFile(t, dir, body)
-			a, _, err := start(t, dir)
-			require.NoError(t, err, name)
-			assert.Equal(t, auth.ModeOff, a.Guard.Mode(), "%s, dial unset", name)
-
 			t.Setenv("HOLLIS_AUTH", "enforce")
+			logs := &syncBuf{}
+			a, _, err := httpserver.StartAuth(guardContext(t), dir, os.Getenv, "s3cret", "127.0.0.1:7777", slog.New(slog.NewTextHandler(logs, nil)))
+			require.NoError(t, err, name)
+			assert.Equal(t, auth.ModeOff, a.Guard.Mode(), "%s: the dial must not apply when auth.yaml exists", name)
+			out := logs.String()
+			assert.Contains(t, out, "level=WARN", name)
+			assert.Contains(t, out, "mode=off", name)
+			assert.Contains(t, out, `source="auth.yaml default"`, name)
+			assert.Contains(t, out, "ignored_env_dial=enforce", name)
+			t.Setenv("HOLLIS_AUTH", "")
 			a, _, err = start(t, dir)
 			require.NoError(t, err, name)
-			assert.Equal(t, auth.ModeEnforce, a.Guard.Mode(), "%s: an empty/partial file must not relax a deployment whose dial says enforce", name)
-			t.Setenv("HOLLIS_AUTH", "")
+			assert.Equal(t, auth.ModeOff, a.Guard.Mode(), "%s, dial unset", name)
 		}
 	})
 
@@ -220,4 +225,17 @@ func TestStartAuthPrecedence(t *testing.T) {
 		assert.Empty(t, file)
 		assert.False(t, strings.Contains(err.Error(), httpserver.AuthFileName))
 	})
+}
+
+func TestModelessFileReloadCannotRelaxANonLoopbackListener(t *testing.T) {
+	i := newJWTIssuer(t)
+	dir := t.TempDir()
+	writeAuthFile(t, dir, "mode: enforce\njwt:\n  bootstrap_key_file: "+i.keyFile+"\n")
+	a, _, err := httpserver.StartAuth(guardContext(t), dir, os.Getenv, "s3cret", "0.0.0.0:7777", slog.New(slog.NewTextHandler(&syncBuf{}, nil)))
+	require.NoError(t, err)
+	require.Equal(t, auth.ModeEnforce, a.Guard.Mode())
+	writeAuthFile(t, dir, "") // emptied: resolves to off, which is a relaxation
+	r := a.Reloader(filepath.Join(dir, httpserver.AuthFileName), 0, slog.New(slog.NewTextHandler(&syncBuf{}, nil)))
+	require.Error(t, r.Load(context.Background()))
+	assert.Equal(t, auth.ModeEnforce, a.Guard.Mode())
 }

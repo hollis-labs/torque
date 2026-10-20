@@ -21,10 +21,11 @@ import (
 //     HOLLIS_AUTH (mode) are read once at startup, as before.
 //   - File present: it REPLACES the TORQUE_AUTH_* variables completely (an
 //     absent key means unset, not "fall back to the variable"). The mode is the
-//     file's `mode` when set; when it is absent or the file is empty the
-//     posture dial HOLLIS_AUTH_TORQUE / HOLLIS_AUTH applies, else off. The
-//     dial stays an environment-level control on purpose, so an empty file
-//     cannot silently relax a deployment that sets HOLLIS_AUTH_TORQUE=enforce.
+//     file's `mode`; when it is absent or the file is empty the mode is
+//     explicitly off, and HOLLIS_AUTH_TORQUE / HOLLIS_AUTH are ignored. The
+//     effective mode and its source are logged at WARN (naming an ignored
+//     dial), and a reload that would weaken the mode on a non-loopback
+//     listener is refused, so write `mode:` explicitly.
 //
 // `torque serve` re-reads the file on an edit or SIGHUP (Auth.Watch). The file
 // must not be group- or world-writable, at startup and on every reload.
@@ -84,8 +85,12 @@ func LoadAuthFile(path string) (cfg AuthConfig, exists bool, err error) {
 	if err := dec.Decode(&f); err != nil && err.Error() != "EOF" {
 		return AuthConfig{}, true, fmt.Errorf("%s: %w", AuthFileName, err)
 	}
+	mode, source := auth.Mode(strings.TrimSpace(f.Mode)), "auth.yaml"
+	if mode == "" {
+		mode, source = auth.ModeOff, "auth.yaml default"
+	}
 	return AuthConfig{
-		Mode:             auth.Mode(strings.TrimSpace(f.Mode)),
+		Mode: mode, ModeSource: source,
 		Issuer:           strings.TrimSpace(f.JWT.Issuer),
 		Audience:         strings.TrimSpace(f.JWT.Audience),
 		JWKSURL:          strings.TrimSpace(f.JWT.JWKSURL),

@@ -19,7 +19,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   started under. A reload cannot relax the mode on a non-loopback/tailnet
   listener; an allowed relaxation is logged; `auth.yaml` must not be group- or
   world-writable; with the file present `TORQUE_AUTH_*` is ignored and an absent
-  `mode` falls to the `HOLLIS_AUTH_TORQUE` / `HOLLIS_AUTH` dial, else off.
+  `mode` (or an empty file) is explicitly off, with the effective mode and source
+  logged at WARN.
   No change without the file. `security/auth` is now v0.2.1.
 - Auth dial and service tokens documented and tested (CW-20261020-0003).
   `SECURITY.md` lists the `HOLLIS_AUTH_TORQUE` / `HOLLIS_AUTH` dial and the
