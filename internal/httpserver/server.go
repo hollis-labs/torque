@@ -114,6 +114,9 @@ func (s *Server) routes() {
 		r.Use(s.corsMiddleware)
 		r.Use(s.requireToken)
 		r.Use(stampHTTPTrigger)
+		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusNotFound, "API route not found")
+		})
 
 		// Tasks
 		r.Get("/judge/status", s.judgeStatus)

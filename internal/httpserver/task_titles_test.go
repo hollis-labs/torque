@@ -72,5 +72,15 @@ func TestHTTP_TaskTitlesWithoutPlanner(t *testing.T) {
 	status, body = taskReferenceCall(t, http.MethodGet, ts.URL, "/tasks/titles", nil, nil)
 	require.Equal(t, http.StatusOK, status, "no ids is an empty answer, not a task id called titles")
 	assert.Empty(t, referenceObj(body))
+}
 
+func TestHTTP_RetiredPlannerRoutesAreNotSPA(t *testing.T) {
+	ts := setupTestServer(t)
+	for _, path := range []string{"/planner/databases", "/planner/board", "/planner/workstreams"} {
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete} {
+			status, body := taskReferenceCall(t, method, ts.URL, path, nil, nil)
+			assert.Equal(t, http.StatusNotFound, status, "%s %s", method, path)
+			assert.Equal(t, "API route not found", referenceObj(body)["error"])
+		}
+	}
 }
