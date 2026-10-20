@@ -13,6 +13,7 @@ require (
 	github.com/hollis-labs/libs/llm/core v0.2.0
 	github.com/hollis-labs/libs/mcp/plugin-mcp v0.3.0
 	github.com/hollis-labs/libs/mesh/core v0.5.0
+	github.com/hollis-labs/libs/mesh/eventbus v0.2.0
 	github.com/hollis-labs/libs/security/auth v0.3.0
 	github.com/hollis-labs/libs/security/policy v0.1.0
 	github.com/jackc/pgx/v5 v5.10.0

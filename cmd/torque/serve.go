@@ -522,6 +522,9 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 			defer wg.Done()
 			runOutboxJanitor(runCtx, store)
 		}()
+		if cfg.Events.HubRelay {
+			startHubRelay(runCtx, &wg, store, cfg.StateDir)
+		}
 	}
 	go func() {
 		defer wg.Done()

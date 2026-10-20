@@ -46,6 +46,16 @@ type Config struct {
 	Concurrency ConcurrencyConfig
 	Merge       MergeConfig
 	Stuck       StuckConfig
+	Events      EventsConfig
+}
+
+// EventsConfig holds the event-hub settings.
+type EventsConfig struct {
+	// HubRelay, from TORQUE_EVENTS_HUB (default false), ships the state-event
+	// outbox to the event hub. It also needs HOLLIS_EVENTS_URL (and the app's
+	// token file, HOLLIS_AUTH_TOKEN_FILE_TORQUE) in the environment; without a
+	// URL it does nothing.
+	HubRelay bool
 }
 
 // ResolveLayout resolves Torque's on-disk layout via go-apppaths in the
@@ -269,6 +279,7 @@ func Load() (*Config, error) {
 			ScanIntervalSeconds:      envInt("TORQUE_STUCK_SCAN_SECONDS", 60),
 			PostProbeCooldownSeconds: envInt("TORQUE_STUCK_POST_PROBE_COOLDOWN_SECONDS", 300),
 		},
+		Events: EventsConfig{HubRelay: envBool("TORQUE_EVENTS_HUB", false)},
 	}
 	return cfg, nil
 }
