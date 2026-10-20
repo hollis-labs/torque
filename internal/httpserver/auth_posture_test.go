@@ -365,3 +365,44 @@ func TestTailnetBindThroughTheServeWiringTightensButNeverLoosens(t *testing.T) {
 	assert.Contains(t, out, "not loopback")
 	assert.NotContains(t, out, "to=off", "the refused mode must not have been applied")
 }
+
+func TestExplicitEmptyKeyClearsAnInheritedValueButAnOmittedKeyInherits(t *testing.T) {
+	t.Setenv("HOLLIS_AUTH", "")
+	t.Setenv("HOLLIS_AUTH_TORQUE", "")
+	i := newJWTIssuer(t)
+	t.Setenv("TORQUE_AUTH_BOOTSTRAP_KEY_FILE", i.keyFile)
+	tok := i.serviceToken("torque.read", "svc-1")
+	for name, c := range map[string]struct {
+		body    string
+		inherit bool
+	}{
+		"omitted key inherits":           {"mode: enforce\njwt:\n  audience: torque\n", true},
+		"explicit empty clears":          {"mode: enforce\njwt:\n  bootstrap_key_file: \"\"\n", false},
+		"explicit empty (single quotes)": {"mode: enforce\njwt:\n  bootstrap_key_file: ''\n", false},
+		"null is omitted":                {"mode: enforce\njwt:\n  bootstrap_key_file: null\n", true},
+	} {
+		dir := t.TempDir()
+		writeAuthFile(t, dir, c.body)
+		a, _, err := start(t, dir)
+		require.NoError(t, err, name)
+		ts := setupSecuredServer(t, httpserver.Security{Token: "s3cret", Guard: a.Guard})
+		want := http.StatusUnauthorized
+		if c.inherit {
+			want = http.StatusOK
+		}
+		assert.Equal(t, want, listTasks(t, ts, tok), name)
+		assert.Equal(t, http.StatusOK, listTasks(t, ts, "s3cret"), "%s: the static token is unaffected", name)
+	}
+
+	// The same through a reload: clearing the inherited key rotates it away.
+	dir := t.TempDir()
+	writeAuthFile(t, dir, "mode: enforce\n")
+	a, _, err := start(t, dir)
+	require.NoError(t, err)
+	ts := setupSecuredServer(t, httpserver.Security{Token: "s3cret", Guard: a.Guard})
+	require.Equal(t, http.StatusOK, listTasks(t, ts, tok), "inherited before the edit")
+	writeAuthFile(t, dir, "mode: enforce\njwt:\n  bootstrap_key_file: \"\"\n")
+	r := a.Reloader(filepath.Join(dir, httpserver.AuthFileName), 0, slog.New(slog.NewTextHandler(&syncBuf{}, nil)))
+	require.NoError(t, r.Load(context.Background()))
+	assert.Equal(t, http.StatusUnauthorized, listTasks(t, ts, tok), "cleared after the reload")
+}

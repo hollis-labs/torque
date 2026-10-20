@@ -16,7 +16,9 @@ import (
 
 // AuthFileName is the optional auth configuration file inside Torque's config
 // directory. Precedence is PER KEY: a key the file sets explicitly overrides
-// the environment for that key only; anything the file leaves out (including
+// the environment for that key only (written empty, e.g. `bootstrap_key_file: ""`,
+// it CLEARS the inherited value; omitted or null, it inherits; an empty `mode`
+// counts as not set); anything the file leaves out (including
 // an empty file) is inherited from TORQUE_AUTH_* (JWT / deny-list) and from the
 // HOLLIS_AUTH_TORQUE / HOLLIS_AUTH dial (mode), else off. Removing the file at
 // runtime falls back to the environment the same way. The effective mode and
@@ -39,56 +41,70 @@ import (
 // part of the file.
 const AuthFileName = "auth.yaml"
 
+// authFile keeps whether a key was written: a pointer is nil when the key is
+// omitted (inherit the environment) and non-nil, possibly empty, when the file
+// sets it (an explicit empty value clears an inherited setting).
 type authFile struct {
-	Mode string `yaml:"mode"`
+	Mode *string `yaml:"mode"`
 	JWT  struct {
-		Issuer           string `yaml:"issuer"`
-		Audience         string `yaml:"audience"`
-		JWKSURL          string `yaml:"jwks_url"`
-		BootstrapKeyFile string `yaml:"bootstrap_key_file"`
+		Issuer           *string `yaml:"issuer"`
+		Audience         *string `yaml:"audience"`
+		JWKSURL          *string `yaml:"jwks_url"`
+		BootstrapKeyFile *string `yaml:"bootstrap_key_file"`
 	} `yaml:"jwt"`
 	DenyList struct {
-		URL string `yaml:"url"`
+		URL *string `yaml:"url"`
 	} `yaml:"deny_list"`
 }
 
 // LoadAuthFile reads path and returns only what the file sets explicitly. exists is false (and the error nil) when the file is
 // absent. Unknown keys are an error: a typo must not silently drop a setting.
 func LoadAuthFile(path string) (cfg AuthConfig, exists bool, err error) {
+	f, exists, err := readAuthFile(path)
+	if err != nil || !exists {
+		return AuthConfig{}, exists, err
+	}
+	val := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return strings.TrimSpace(*p)
+	}
+	return AuthConfig{
+		Mode: auth.Mode(val(f.Mode)), Issuer: val(f.JWT.Issuer), Audience: val(f.JWT.Audience), JWKSURL: val(f.JWT.JWKSURL),
+		BootstrapKeyFile: val(f.JWT.BootstrapKeyFile), DenyListURL: val(f.DenyList.URL),
+	}, true, nil
+}
+
+// readAuthFile reads and validates the file (permissions, size, schema).
+func readAuthFile(path string) (*authFile, bool, error) {
 	f0, err := os.Open(path) // #nosec G304 -- operator-configured path
 	if os.IsNotExist(err) {
-		return AuthConfig{}, false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return AuthConfig{}, true, fmt.Errorf("%s: %w", AuthFileName, err)
+		return nil, true, fmt.Errorf("%s: %w", AuthFileName, err)
 	}
 	defer func() { _ = f0.Close() }()
 	// Checked on the open file, so the file that is read is the file that was checked.
 	fi, err := f0.Stat()
 	if err != nil {
-		return AuthConfig{}, true, fmt.Errorf("%s: %w", AuthFileName, err)
+		return nil, true, fmt.Errorf("%s: %w", AuthFileName, err)
 	}
 	if fi.Mode().Perm()&0o022 != 0 {
-		return AuthConfig{}, true, fmt.Errorf("%s: refusing a group- or world-writable file (mode %04o); chmod go-w", AuthFileName, fi.Mode().Perm())
+		return nil, true, fmt.Errorf("%s: refusing a group- or world-writable file (mode %04o); chmod go-w", AuthFileName, fi.Mode().Perm())
 	}
 	b, err := io.ReadAll(io.LimitReader(f0, 64<<10))
 	if err != nil {
-		return AuthConfig{}, true, fmt.Errorf("%s: %w", AuthFileName, err)
+		return nil, true, fmt.Errorf("%s: %w", AuthFileName, err)
 	}
 	var f authFile
 	dec := yaml.NewDecoder(strings.NewReader(string(b)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&f); err != nil && err.Error() != "EOF" {
-		return AuthConfig{}, true, fmt.Errorf("%s: %w", AuthFileName, err)
+		return nil, true, fmt.Errorf("%s: %w", AuthFileName, err)
 	}
-	return AuthConfig{
-		Mode:             auth.Mode(strings.TrimSpace(f.Mode)),
-		Issuer:           strings.TrimSpace(f.JWT.Issuer),
-		Audience:         strings.TrimSpace(f.JWT.Audience),
-		JWKSURL:          strings.TrimSpace(f.JWT.JWKSURL),
-		BootstrapKeyFile: strings.TrimSpace(f.JWT.BootstrapKeyFile),
-		DenyListURL:      strings.TrimSpace(f.DenyList.URL),
-	}, true, nil
+	return &f, true, nil
 }
 
 // Reloader returns the watcher Watch runs: it re-reads path when its content
@@ -171,24 +187,28 @@ func modeSource(fromFile bool, getenv func(string) string) string {
 // it. file is path when the file exists, else "". The result's ModeSource says
 // whether the mode is the file's, the HOLLIS_AUTH_* dial's, or the default.
 func LoadAuthConfigAt(path string, getenv func(string) string) (cfg AuthConfig, file string, err error) {
-	fc, exists, err := LoadAuthFile(path)
+	fc, exists, err := readAuthFile(path)
 	if err != nil {
 		return AuthConfig{}, path, err
 	}
 	cfg = envAuthConfig(getenv)
 	if exists {
 		file = path
-		set := func(dst *string, v string) {
-			if v != "" {
-				*dst = v
+		// A key the file writes wins, even when it is written empty (that clears
+		// the inherited value); an omitted key inherits.
+		set := func(dst *string, v *string) {
+			if v != nil {
+				*dst = strings.TrimSpace(*v)
 			}
 		}
-		set(&cfg.Issuer, fc.Issuer)
-		set(&cfg.Audience, fc.Audience)
-		set(&cfg.JWKSURL, fc.JWKSURL)
-		set(&cfg.BootstrapKeyFile, fc.BootstrapKeyFile)
-		set(&cfg.DenyListURL, fc.DenyListURL)
-		cfg.Mode = fc.Mode
+		set(&cfg.Issuer, fc.JWT.Issuer)
+		set(&cfg.Audience, fc.JWT.Audience)
+		set(&cfg.JWKSURL, fc.JWT.JWKSURL)
+		set(&cfg.BootstrapKeyFile, fc.JWT.BootstrapKeyFile)
+		set(&cfg.DenyListURL, fc.DenyList.URL)
+		if fc.Mode != nil {
+			cfg.Mode = auth.Mode(strings.TrimSpace(*fc.Mode)) // an empty mode is "not set": the dial applies
+		}
 	}
 	cfg.ModeSource, cfg.File = modeSource(cfg.Mode != "", getenv), file
 	return cfg, file, nil
