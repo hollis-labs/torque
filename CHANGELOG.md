@@ -9,18 +9,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added
 
 - Auth settings reload without a restart (CW-20261019-0046, security/auth
-  v0.2.1). An optional `auth.yaml` in the config directory replaces the
-  `TORQUE_AUTH_*` environment as the source of the mode and the JWT / deny-list
-  settings and is re-read on an edit or `SIGHUP`. All or nothing: the next
+  v0.2.1). An optional `auth.yaml` in the config directory sets the mode and the
+  JWT / deny-list settings (over `TORQUE_AUTH_*`, per key) and is re-read on an edit or `SIGHUP`. All or nothing: the next
   verifier is built and validated first (a JWKS URL with no bootstrap key needs
   its first fetch), a failed reload changes nothing, and a reload never forgets
   a revocation (the deny-list is kept while its URL is unchanged; a new URL needs
   a validated first fetch). Requests are pinned to the mode and verifier they
   started under. A reload cannot relax the mode on a non-loopback/tailnet
   listener; an allowed relaxation is logged; `auth.yaml` must not be group- or
-  world-writable; with the file present `TORQUE_AUTH_*` is ignored and an absent
-  `mode` (or an empty file) is explicitly off, with the effective mode and source
-  logged at WARN.
+  world-writable; precedence is per key (a key the file sets overrides the environment;
+  what it omits, or an empty file, inherits `TORQUE_AUTH_*` and the
+  `HOLLIS_AUTH_TORQUE` / `HOLLIS_AUTH` dial, else off; removing the file falls
+  back the same way); the effective mode and its source are logged at WARN.
   No change without the file. `security/auth` is now v0.2.1.
 - Auth dial and service tokens documented and tested (CW-20261020-0003).
   `SECURITY.md` lists the `HOLLIS_AUTH_TORQUE` / `HOLLIS_AUTH` dial and the

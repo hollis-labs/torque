@@ -49,10 +49,10 @@ type AuthConfig struct {
 	// a reload may not relax the mode (enforce -> permissive/off, permissive ->
 	// off) on a listener that is not loopback or tailnet.
 	Addr string
-	// ModeSource says where Mode came from, for the log line that names the
-	// effective mode ("auth.yaml", "auth.yaml default"); empty means the
-	// environment dial.
+	// ModeSource and File say where Mode came from and which auth.yaml (if any)
+	// contributed, for the log line naming the effective mode. Informational.
 	ModeSource string
+	File       string
 	Audit      func(auth.Event)
 	Logger     *slog.Logger
 }
@@ -169,21 +169,17 @@ func (a *Auth) Reload(c AuthConfig) error {
 	return nil
 }
 
-// logMode says which mode is in effect and where it came from, at WARN so a
-// mode-less auth.yaml (which resolves to off) or an ignored environment dial is
-// visible in the log.
+// logMode says which mode is in effect and where it came from, at WARN, at
+// start and after every successful reload.
 func (a *Auth) logMode(c AuthConfig, mode auth.Mode, when string) {
-	src := c.ModeSource
+	src, file := c.ModeSource, c.File
 	if src == "" {
-		src = "environment dial or default"
+		src = "unspecified"
 	}
-	attrs := []any{"when", when, "mode", string(mode), "source", src}
-	if strings.HasPrefix(src, "auth.yaml") {
-		if dial, err := auth.ModeFromEnv(AuthApp, ""); err == nil && dial != "" && dial != mode {
-			attrs = append(attrs, "ignored_env_dial", string(dial))
-		}
+	if file == "" {
+		file = "none"
 	}
-	a.log.Warn("auth mode in effect", attrs...)
+	a.log.Warn("auth mode in effect", "when", when, "mode", string(mode), "source", src, "auth_file", file)
 }
 
 func modeRank(m auth.Mode) int {

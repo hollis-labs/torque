@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hollis-labs/libs/security/auth"
 	"github.com/stretchr/testify/assert"
@@ -150,45 +151,63 @@ func TestStartAuthPrecedence(t *testing.T) {
 		assert.Equal(t, http.StatusOK, listTasks(t, ts, i.serviceToken("torque.read", "svc-1")), "the JWT key from the environment")
 	})
 
-	t.Run("file replaces TORQUE_AUTH_* entirely", func(t *testing.T) {
+	t.Run("per key: a file without jwt inherits TORQUE_AUTH_*", func(t *testing.T) {
 		t.Setenv("TORQUE_AUTH_BOOTSTRAP_KEY_FILE", i.keyFile)
 		dir := t.TempDir()
-		writeAuthFile(t, dir, "mode: enforce\n") // no jwt section: the variable must not leak in
+		writeAuthFile(t, dir, "mode: enforce\n")
 		a, file, err := start(t, dir)
 		require.NoError(t, err)
 		assert.NotEmpty(t, file)
 		ts := setupSecuredServer(t, httpserver.Security{Token: "s3cret", Guard: a.Guard})
-		assert.Equal(t, http.StatusUnauthorized, listTasks(t, ts, i.serviceToken("torque.read", "svc-1")), "the environment's key was used although auth.yaml exists")
-		assert.Equal(t, http.StatusOK, listTasks(t, ts, "s3cret"))
+		assert.Equal(t, http.StatusOK, listTasks(t, ts, i.serviceToken("torque.read", "svc-1")), "the environment's key is inherited for the key the file leaves out")
+	})
+
+	t.Run("per key: a key the file sets overrides the environment for that key", func(t *testing.T) {
+		other := newJWTIssuer(t)
+		t.Setenv("TORQUE_AUTH_BOOTSTRAP_KEY_FILE", i.keyFile)
+		dir := t.TempDir()
+		writeAuthFile(t, dir, "mode: enforce\njwt:\n  bootstrap_key_file: "+other.keyFile+"\n")
+		a, _, err := start(t, dir)
+		require.NoError(t, err)
+		ts := setupSecuredServer(t, httpserver.Security{Token: "s3cret", Guard: a.Guard})
+		assert.Equal(t, http.StatusOK, listTasks(t, ts, other.serviceToken("torque.read", "svc-2")))
+		assert.Equal(t, http.StatusUnauthorized, listTasks(t, ts, i.serviceToken("torque.read", "svc-1")), "the environment's key won over the file's")
 	})
 
 	t.Run("the file's mode beats the environment dial", func(t *testing.T) {
 		t.Setenv("HOLLIS_AUTH_TORQUE", "enforce")
 		dir := t.TempDir()
 		writeAuthFile(t, dir, "mode: permissive\n")
-		a, _, err := start(t, dir)
+		logs := &syncBuf{}
+		a, _, err := httpserver.StartAuth(guardContext(t), dir, os.Getenv, "s3cret", "127.0.0.1:7777", slog.New(slog.NewTextHandler(logs, nil)))
 		require.NoError(t, err)
 		assert.Equal(t, auth.ModePermissive, a.Guard.Mode())
+		assert.Contains(t, logs.String(), "mode=permissive")
+		assert.Contains(t, logs.String(), "source=auth.yaml")
 	})
 
-	t.Run("absent mode and an empty file resolve explicitly to off, ignoring the dial, and say so", func(t *testing.T) {
+	t.Run("an omitted mode or an empty file inherits the dial, else off, and the log says which", func(t *testing.T) {
 		for name, body := range map[string]string{"empty file": "", "no mode key": "jwt:\n  audience: torque\n"} {
 			dir := t.TempDir()
 			writeAuthFile(t, dir, body)
-			t.Setenv("HOLLIS_AUTH", "enforce")
-			logs := &syncBuf{}
-			a, _, err := httpserver.StartAuth(guardContext(t), dir, os.Getenv, "s3cret", "127.0.0.1:7777", slog.New(slog.NewTextHandler(logs, nil)))
-			require.NoError(t, err, name)
-			assert.Equal(t, auth.ModeOff, a.Guard.Mode(), "%s: the dial must not apply when auth.yaml exists", name)
-			out := logs.String()
-			assert.Contains(t, out, "level=WARN", name)
-			assert.Contains(t, out, "mode=off", name)
-			assert.Contains(t, out, `source="auth.yaml default"`, name)
-			assert.Contains(t, out, "ignored_env_dial=enforce", name)
+			for dial, want := range map[string]struct {
+				mode   auth.Mode
+				source string
+			}{
+				"":        {auth.ModeOff, "source=default"},
+				"enforce": {auth.ModeEnforce, `source="env HOLLIS_AUTH"`},
+			} {
+				t.Setenv("HOLLIS_AUTH", dial)
+				logs := &syncBuf{}
+				a, _, err := httpserver.StartAuth(guardContext(t), dir, os.Getenv, "s3cret", "127.0.0.1:7777", slog.New(slog.NewTextHandler(logs, nil)))
+				require.NoError(t, err, name)
+				assert.Equal(t, want.mode, a.Guard.Mode(), "%s, dial %q", name, dial)
+				assert.Contains(t, logs.String(), "level=WARN")
+				assert.Contains(t, logs.String(), "mode="+string(want.mode))
+				assert.Contains(t, logs.String(), want.source, "%s, dial %q", name, dial)
+				assert.Contains(t, logs.String(), "auth_file="+filepath.Join(dir, httpserver.AuthFileName))
+			}
 			t.Setenv("HOLLIS_AUTH", "")
-			a, _, err = start(t, dir)
-			require.NoError(t, err, name)
-			assert.Equal(t, auth.ModeOff, a.Guard.Mode(), "%s, dial unset", name)
 		}
 	})
 
@@ -228,14 +247,64 @@ func TestStartAuthPrecedence(t *testing.T) {
 }
 
 func TestModelessFileReloadCannotRelaxANonLoopbackListener(t *testing.T) {
+	t.Setenv("HOLLIS_AUTH", "")
+	t.Setenv("HOLLIS_AUTH_TORQUE", "")
 	i := newJWTIssuer(t)
 	dir := t.TempDir()
 	writeAuthFile(t, dir, "mode: enforce\njwt:\n  bootstrap_key_file: "+i.keyFile+"\n")
 	a, _, err := httpserver.StartAuth(guardContext(t), dir, os.Getenv, "s3cret", "0.0.0.0:7777", slog.New(slog.NewTextHandler(&syncBuf{}, nil)))
 	require.NoError(t, err)
 	require.Equal(t, auth.ModeEnforce, a.Guard.Mode())
-	writeAuthFile(t, dir, "") // emptied: resolves to off, which is a relaxation
+	writeAuthFile(t, dir, "") // emptied: inherits the (unset) dial, i.e. off, which is a relaxation
 	r := a.Reloader(filepath.Join(dir, httpserver.AuthFileName), 0, slog.New(slog.NewTextHandler(&syncBuf{}, nil)))
 	require.Error(t, r.Load(context.Background()))
+	assert.Equal(t, auth.ModeEnforce, a.Guard.Mode())
+}
+
+func TestRemovingTheFileFallsBackToTheEnvironment(t *testing.T) {
+	i := newJWTIssuer(t)
+	t.Setenv("HOLLIS_AUTH", "")
+	t.Setenv("HOLLIS_AUTH_TORQUE", "permissive")
+	t.Setenv("TORQUE_AUTH_BOOTSTRAP_KEY_FILE", i.keyFile)
+	dir := t.TempDir()
+	path := filepath.Join(dir, httpserver.AuthFileName)
+	writeAuthFile(t, dir, "mode: enforce\n")
+	logs := &syncBuf{}
+	lg := slog.New(slog.NewTextHandler(logs, nil))
+	a, _, err := httpserver.StartAuth(guardContext(t), dir, os.Getenv, "", "127.0.0.1:7777", lg)
+	require.NoError(t, err)
+	require.Equal(t, auth.ModeEnforce, a.Guard.Mode())
+	ts := setupSecuredServer(t, httpserver.Security{Guard: a.Guard})
+
+	ctx, cancel := context.WithCancel(guardContext(t))
+	done := make(chan struct{})
+	go func() { a.Watch(ctx, path, 10*time.Millisecond, lg); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	time.Sleep(60 * time.Millisecond)
+
+	require.NoError(t, os.Remove(path))
+	require.Eventually(t, func() bool { return a.Guard.Mode() == auth.ModePermissive }, 5*time.Second, 20*time.Millisecond, "the removal to take effect")
+	assert.Equal(t, http.StatusOK, listTasks(t, ts, ""), "permissive from the environment dial")
+	out := logs.String()
+	assert.Contains(t, out, "auth mode changed")
+	assert.Contains(t, out, "from=enforce")
+	assert.Contains(t, out, "to=permissive")
+	assert.Contains(t, out, `source="env HOLLIS_AUTH_TORQUE"`)
+	assert.Contains(t, out, "auth_file=none")
+	assert.Equal(t, http.StatusOK, listTasks(t, ts, i.serviceToken("torque.read", "svc-1")), "the environment's JWT key is in use")
+}
+
+func TestRemovingTheFileCannotRelaxANonLoopbackListener(t *testing.T) {
+	t.Setenv("HOLLIS_AUTH", "")
+	t.Setenv("HOLLIS_AUTH_TORQUE", "")
+	i := newJWTIssuer(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, httpserver.AuthFileName)
+	writeAuthFile(t, dir, "mode: enforce\njwt:\n  bootstrap_key_file: "+i.keyFile+"\n")
+	a, _, err := httpserver.StartAuth(guardContext(t), dir, os.Getenv, "s3cret", "0.0.0.0:7777", slog.New(slog.NewTextHandler(&syncBuf{}, nil)))
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(path))
+	r := a.Reloader(path, 0, slog.New(slog.NewTextHandler(&syncBuf{}, nil)))
+	require.Error(t, r.Load(context.Background()), "falling back to the (unset) dial would be off")
 	assert.Equal(t, auth.ModeEnforce, a.Guard.Mode())
 }
