@@ -32,7 +32,7 @@ func TestHealthzPublicJSON(t *testing.T) {
 				api := do(t, http.MethodGet, ts.URL+"/api/v1/tasks", nil)
 				assert.Equal(t, http.StatusUnauthorized, api.StatusCode)
 			}
-			for _, path := range []string{"/", "/planner", "/tasks/example"} {
+			for _, path := range []string{"/", "/agents", "/tasks/example"} {
 				spa := do(t, http.MethodGet, ts.URL+path, nil)
 				assert.Equal(t, http.StatusOK, spa.StatusCode, path)
 				assert.Contains(t, spa.Header.Get("Content-Type"), "text/html", path)

@@ -170,8 +170,7 @@ Project, Epic, and Sprint tools only register when their feature flag
 `registerOptInTools` in `internal/mcpadapter/adapter.go`. `torque_health`
 reports currently-enabled features in `enabled_features[]`. Restart the MCP
 process after toggling a flag so `tools/list` refreshes. Task/Subtodo/
-Comment/Issue/Plan tools are always registered. The Planner tools register
-when `features.planner` is enabled (see [Planner](#planner-cw-20261011-0050)).
+Comment/Issue/Plan tools are always registered.
 
 ---
 
@@ -785,80 +784,13 @@ run ended or does not exist. With no Tether reader, an unreadable run, or a live
 the claim is left alone and logged once. `GET /api/v1/workstreams/claims?status=active|released|all`
 lists claims; each carries `expired`.
 
-## Planner (CW-20261011-0050)
+## Portfolio planner retirement
 
-The portfolio planner: the portfolio-level things Torque tasks hang off. Seven
-databases, each a typed table: `priorities` (`PR-`), `workstreams` (`WS-`),
-`roadmap` (`RM-`), `ideas` (`ID-`), `decisions` (`DEC-`), `risks` (`RK-`) and an
-`inbox` (`IN-`). It is not a task tracker: tasks stay in Torque, and a planner
-item points at them with `links` (`kind` `torque`, `ref` a task id). Ported from
-`~/dev/projects/portfolio-tracker`; `torque planner import` brings its data over.
-
-Feature-flagged: tools register only when `features.planner` is on (restart the
-MCP process after toggling, as for the other flags). The HTTP routes answer 404
-`feature_disabled` while it is off.
-
-Items are JSON objects validated against the tracker's schemas
-(`torque_planner_schema` lists required fields and enums). Every item has a
-stable `id` (never reused; a dropped item gets a status, there is no delete), a
-`rev` that starts at 1 and rises on every write, `created`/`updated` dates, an
-`author`, an optional manual `order`, `priority` (1-5), `related_ids`,
-`comments` and `links`. Fields a schema does not name are kept.
-
-| Tool | Purpose |
-|---|---|
-| `torque_planner_databases` | The databases with prefix, count and latest updated date. |
-| `torque_planner_schema` | Required fields, every field, enums and link kinds of one database. |
-| `torque_planner_list` | Items of a database in manual order. `filters` match exactly (array fields by membership), `sort` is a field (`-` for descending). Brief by default (summary fields); `brief=false` for full items. |
-| `torque_planner_get` | One item in full, with comments and links. |
-| `torque_planner_board` | The board. `scope` is `curated` (the default) or `all`. **Curated** lists only what the owner manages: workstreams tagged `board` (tag one with `torque_planner_update` `{"tags":[..., "board"]}`), never Torque task rows. **in_flight** = status `active`, **pre_flight** = `planned` or `paused`, **landed** = `done` within `recent_hours` (by `updated`), **holds** = open decisions, open `high` risks and new inbox items tagged `board` or linked to a board workstream (`workstream_ids`/`related_ids`), plus board workstreams with non-empty `blockers`. `parked`, `unreviewed` and older `done` workstreams are hidden. Workstream rows carry `phase`, `owner`, `tldr`, `next_step`, `blockers`, `tags` and `task_counts` (Torque tasks per status, from the workstream's `torque_project_ids`/`torque_tag`; counts only). With nothing tagged, a notice says so. **`scope=all`** is the activity feed: **in flight** (Torque `doing` with an update or comment within `active_hours`, roadmap `in-progress`, Torque `review` as ARRIVING), **landed** (Torque `done` and decisions `decided` within `recent_hours`, roadmap `landed`/`done` within 7 days), **pre-flight** (Torque `queued`, `doing` tasks with no recent activity as PREPARING, roadmap `adopting` and `planned` for `now`/`next`; never the `todo` backlog), **holds** (decisions needing a decision, open `high` risks, new inbox items: waiting on the owner). `text=true` returns the compact one-row-per-line board for a quick check-in. Reads the task store directly; a comment counts as activity because Torque does not bump `updated_at` on one. |
-| `torque_planner_search` | Every term must appear in an item's id, title or text, including comments and options. |
-| `torque_planner_create` | Create an item. `id` is generated when omitted: sequential for `PR-` (two digits), `DEC-`, `RK-`, `IN-`; a slug of the title for `WS-`, `RM-`, `ID-`. Ids are unique across all databases. |
-| `torque_planner_update` | Merge `patch` into an item: arrays replaced, `null` removes a field. `id`, `created`, `comments` and `rev` cannot be patched. With `rev`, a mismatch is a `conflict` naming the current rev (HTTP also returns the current item); without it, last write wins. |
-| `torque_planner_comment` | Append a comment (`c-<n>`); `kind` `decision` marks a decision record. |
-| `torque_planner_relate` | Add (or `remove=true`) an id in a reference field (`related_ids`, `depends_on`, any `*_ids`). Both items must exist; idempotent. |
-| `torque_planner_link_add` / `_link_remove` | External pointers: `kind` is `torque` (a task id), `tesseract`, `tether`, `pr`, `adr`, `url` (http/https only), `file` (a plain pointer, never read), `commit`, `workstream`. A duplicate kind+ref is a `conflict`. |
-| `torque_planner_reorder` | Give the listed ids order 10, 20, 30 ... in sequence; other ordered items follow; all writes land together. |
-| `torque_planner_decide` / `_defer` / `_reopen` | Decision lifecycle (`needs-decision`, `decided`, `deferred`, `superseded`, `reversed`). `decide` needs one of the decision's `options`, sets `selected_option`, `decided_at`, `decided_by`, and records an optional comment as a decision comment. `reopen` clears the decision. |
-| `torque_planner_inbox_add` | Something to look at that is not an item yet. `path` is a pointer; it is never read. |
-| `torque_planner_inbox_promote` | Create an item in another database from an inbox item (title; body to notes; path to a file link; `related_ids` point back; `fields` override) and mark the inbox item `promoted`, both in one write. Promoting twice is a `conflict`. |
-| `torque_planner_inbox_dismiss` | Mark an inbox item `dismissed`; a note becomes a comment. |
-
-Authors: a write's `author` argument wins; otherwise `portfolio-manager`. Over
-HTTP a request with header `X-Client: browser` is `chrispian`.
-
-HTTP, under `/api/v1/planner` (JSON in and out; errors are
-`{error, code, details}` with `details.errors` for validation and
-`details.current` for a conflict):
-
-| Route | Operation |
-|---|---|
-| `GET /databases`, `GET /search?q=&db=`, `GET /schema/{db}` | databases, search, schema |
-| `GET /{db}?field=value&sort=` | list (query parameters are filters) |
-| `POST /{db}` | create (201) |
-| `GET /{db}/{id}`, `PATCH /{db}/{id}` `{patch, rev?}` | get, update |
-| `POST /{db}/{id}/comments` `{text, author?, kind?}` | comment |
-| `POST` / `DELETE /links` `{from:{db,id}, to:{db,id}, field?}` | relate / unrelate |
-| `POST /{db}/{id}/links` `{link:{kind,ref,label?}}`, `DELETE /{db}/{id}/links` `{kind,ref}` | external pointer add / remove |
-| `POST /{db}/reorder` `{ids}` | reorder |
-| `POST /decisions/{id}/decide` `{option, comment?}`, `/defer` `{note?}`, `/reopen` | decision lifecycle |
-| `POST /inbox` `{title,...}`, `POST /inbox/{id}/promote` `{to_db, fields?}`, `/dismiss` `{note?}` | inbox |
-
-Also under `/api/v1/planner`:
-
-| Route | Operation |
-|---|---|
-| `GET /board?recent_hours=&active_hours=&limit=` | the departure board (defaults 72, 2, 30; limits 2160, 720, 200) |
-| `GET /torque-titles?ids=a,b,c` | live `{id, title, status, priority, updated_at}` of Torque task ids; an unknown id is `null` (at most 100) |
-| `GET /workstreams/{id}/tasks` | the Torque tasks behind a workstream: `counts` per status over its `torque_project_ids` (narrowed by `torque_tag` when set) and the open ones, newest first |
-
-Command line, against the configured database (needs `features.planner`): `torque planner board [--json] [--recent-hours N] [--active-hours N] [--limit N]` prints the board as text and is the quick check-in; `torque planner import --from <portfolio-tracker data dir> [--apply]` brings the tracker's JSON in (a report without `--apply`).
-
-In the GUI the Planner opens on the Board; each row opens its Torque task or planner item, and the board refreshes on task and planner events and every 30 seconds.
-
-Every write broadcasts a `planner.changed` event (`{db, id}`) on the SSE stream.
-
----
+The temporary portfolio planner has moved to Tachyon. Torque no longer exposes
+`torque_planner_*`, `/api/v1/planner`, the planner CLI or the Planner GUI.
+Migration 046 deletes its dedicated tables, planner judgments and feature flag.
+Torque execution plans and tasks remain available. Task reference previews use
+`GET /api/v1/tasks/titles?ids=...`; the agent monitor lives at `/agents`.
 
 ## Where the real-FK / `depends_on` work lives
 

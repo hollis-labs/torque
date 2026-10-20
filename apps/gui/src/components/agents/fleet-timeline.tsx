@@ -1,5 +1,5 @@
 import { stateSegments, type FleetTransition } from '@/lib/fleet-agents'
-import { FLEET_STATE_STYLE } from '@/components/planner/fleet-style'
+import { FLEET_STATE_STYLE } from '@/components/agents/fleet-style'
 
 /**
  * A stepped strip of the states this page has observed over a window. The

@@ -1,6 +1,6 @@
 /** Surfaces R2 adopted. Each can be switched off without touching its call site's markup. */
 export type AutolinkSurface =
-  | 'task-description' | 'task-comments' | 'planner-comments' | 'agents'
+  | 'task-description' | 'task-comments' | 'agents'
   | 'alerts' | 'messaging' | 'forums'
 
 const off = new Set<AutolinkSurface>()

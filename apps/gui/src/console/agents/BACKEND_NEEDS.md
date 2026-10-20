@@ -1,6 +1,6 @@
 # Agent directory: backend needs
 
-The agent directory (`/planner/builder`) is read-only and mock-backed behind
+The agent directory (`/agents/directory`) is read-only and mock-backed behind
 `AgentsClient` (`client.ts`). The mock lives in `mock.ts`; swap it by passing a
 real client to `AgentsClientProvider` (or changing the default in `context.tsx`).
 Shapes in `types.ts` follow the Tether catalog agent entry as understood today;

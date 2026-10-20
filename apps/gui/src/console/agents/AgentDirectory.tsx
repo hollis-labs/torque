@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { EmptyState, Input } from '@hollis-labs/sysop-ui'
-import { PixelRobot } from '@/components/planner/agent-activity'
+import { PixelRobot } from '@/components/agents/agent-activity'
 import { ago } from '@/lib/agent-activity'
 import { AgentEditor } from './AgentEditor'
 import { AssignmentsView } from './AssignmentsView'
@@ -22,7 +22,7 @@ const LIVE_STYLE: Record<AgentLiveRef['state'], { label: string; dot: string; te
   offline: { label: 'OFFLINE', dot: 'bg-zinc-600', text: 'text-zinc-400', avatar: 'idle' },
 }
 
-const FLEET_PATH = '/planner/agents'
+const FLEET_PATH = '/agents'
 
 function LiveBadge({ live }: { live?: AgentLiveRef }) {
   const s = LIVE_STYLE[live?.state ?? 'offline']

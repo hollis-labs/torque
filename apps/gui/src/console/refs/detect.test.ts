@@ -123,7 +123,7 @@ describe('paths', () => {
   })
   it('rejects prose that merely contains slashes', () => {
     expect(refs('and/or either/or 10/16/2026 TCP/IP w/o 24/7 Q3/Q4 v1.2/3')).toEqual([])
-    expect(refs('/api/planner/torque-titles /operations')).toEqual([])
+    expect(refs('/api/tasks/titles /operations')).toEqual([])
   })
   it('rejects bare domains and versions', () => {
     expect(refs('github.com/hollis-labs/torque example.com/a/b.go 1.2.3/4.5')).toEqual([])

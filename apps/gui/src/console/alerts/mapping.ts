@@ -29,7 +29,7 @@ export function linkOf(e: ConsoleEvent): AlertLink | undefined {
   if (task) return { label: 'Open task', href: `/tasks/${encodeURIComponent(task.id)}` }
   const subj = e.subjects.find((s) => safeHref(s.url))
   if (subj) return { label: 'Open', href: safeHref(subj.url) as string }
-  if (e.subjects.some((s) => s.type === 'agent')) return { label: 'View agents', href: '/planner/agents' }
+  if (e.subjects.some((s) => s.type === 'agent')) return { label: 'View agents', href: '/agents' }
   return undefined
 }
 

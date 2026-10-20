@@ -33,7 +33,7 @@ const (
 // JudgmentRecord is one ledger row.
 type JudgmentRecord struct {
 	ID            int64              `json:"id"`
-	SubjectType   string             `json:"subject_type"` // task | planner:<db>
+	SubjectType   string             `json:"subject_type"` // task
 	SubjectID     string             `json:"subject_id"`
 	SetID         string             `json:"set_id"`
 	SetVersion    int                `json:"set_version"`

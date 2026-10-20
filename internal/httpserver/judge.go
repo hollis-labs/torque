@@ -14,7 +14,7 @@ import (
 // summary. Reading never spends anything; only enrich calls the decider.
 
 func judgeActor(r *http.Request) string {
-	if a := plannerActor(r); a != "" {
+	if a := browserActor(r); a != "" {
 		return a
 	}
 	return "api"
@@ -36,7 +36,7 @@ func (s *Server) judgeStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) judgeSuggestions(w http.ResponseWriter, r *http.Request) {
 	out, err := s.svc.Judge.Suggestions(suggestionFilter(r))
 	if err != nil {
-		writePlannerError(w, err)
+		writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -45,14 +45,14 @@ func (s *Server) judgeSuggestions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) judgeSummary(w http.ResponseWriter, r *http.Request) {
 	sets, err := s.svc.Judge.Sets()
 	if err != nil {
-		writePlannerError(w, err)
+		writeServiceError(w, err)
 		return
 	}
 	out := map[string]any{}
 	for _, id := range judge.SetIDs(sets) {
 		counts, err := s.svc.Judge.Counts(id)
 		if err != nil {
-			writePlannerError(w, err)
+			writeServiceError(w, err)
 			return
 		}
 		out[id] = counts
@@ -68,7 +68,7 @@ func (s *Server) judgeAccept(w http.ResponseWriter, r *http.Request) {
 	}
 	added, err := s.svc.Judge.Accept(id, judgeActor(r))
 	if err != nil {
-		writePlannerError(w, err)
+		writeServiceError(w, err)
 		return
 	}
 	s.sse.Broadcast("judge.changed", map[string]interface{}{"id": id})
@@ -82,7 +82,7 @@ func (s *Server) judgeReject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.svc.Judge.Reject(id, judgeActor(r)); err != nil {
-		writePlannerError(w, err)
+		writeServiceError(w, err)
 		return
 	}
 	s.sse.Broadcast("judge.changed", map[string]interface{}{"id": id})
@@ -115,7 +115,7 @@ func (s *Server) judgeBulk(w http.ResponseWriter, r *http.Request) {
 		MinConfidence: body.Min, MaxConfidence: body.Max, Limit: body.Limit,
 	}, body.Action == "accept", judgeActor(r))
 	if err != nil {
-		writePlannerError(w, err)
+		writeServiceError(w, err)
 		return
 	}
 	s.sse.Broadcast("judge.changed", map[string]interface{}{"bulk": true})
@@ -126,7 +126,7 @@ func (s *Server) judgeBulk(w http.ResponseWriter, r *http.Request) {
 func (s *Server) judgeEnrich(w http.ResponseWriter, r *http.Request) {
 	recs, err := s.svc.Judge.EnrichNow(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
-		writePlannerError(w, err)
+		writeServiceError(w, err)
 		return
 	}
 	s.sse.Broadcast("judge.changed", map[string]interface{}{"task_id": chi.URLParam(r, "id")})

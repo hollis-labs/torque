@@ -1,4 +1,4 @@
-import type { PlannerTaskBrief } from '@/lib/types'
+import type { TaskBrief } from '@/lib/types'
 import type { KindResolver, RefEntity, ResolveOutcome, StatusTone } from './types'
 
 export interface MockResolverOptions {
@@ -42,11 +42,11 @@ const TASK_TONE: Record<string, StatusTone> = {
 
 /**
  * The real adapter for `torque.task`: wraps the existing
- * `api.plannerTaskTitles` (the endpoint behind usePlannerTaskTitles), so task
+ * `api.taskTitles`, so task
  * references resolve against the live Torque with no new backend work.
  */
 export function createTorqueTaskResolver(
-  fetchTitles: (ids: string[], signal?: AbortSignal) => Promise<Record<string, PlannerTaskBrief | null>>,
+  fetchTitles: (ids: string[], signal?: AbortSignal) => Promise<Record<string, TaskBrief | null>>,
 ): KindResolver {
   return {
     async resolveMany(ids, { signal }) {

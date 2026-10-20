@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
-import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban, MessagesSquare, Compass, Tags, GitPullRequest } from 'lucide-react'
+import { LayoutList, Play, BarChart3, Settings, Cog, FileText, Inbox, FolderTree, Sparkles, FolderKanban, MessagesSquare, Bot, Tags, GitPullRequest } from 'lucide-react'
 import { NavRail, TooltipProvider, Toaster, type NavRailItem } from '@hollis-labs/sysop-ui'
 import { ApiProvider } from '@/hooks/use-api'
 import { ConsoleShell, AlertTrayTrigger, ConsoleNavExtras, useConsoleEnabled } from '@/console'
@@ -31,7 +31,7 @@ import PlanDetailPage from '@/pages/PlanDetailPage'
 import ModelsPage from '@/pages/ModelsPage'
 import CollectionsPage from '@/pages/CollectionsPage'
 import MessagingPage from '@/pages/MessagingPage'
-import PlannerPage from '@/pages/PlannerPage'
+import AgentsPage from '@/pages/AgentsPage'
 import ForumsPage from '@/pages/ForumsPage'
 import SuggestionsPage from '@/pages/SuggestionsPage'
 
@@ -39,7 +39,7 @@ const NAV_DESTINATIONS = [
   { key: 'operations', to: '/operations', label: 'Operations', icon: <LayoutList className="h-4 w-4" /> },
   { key: 'collections', to: '/collections', label: 'Collections', icon: <FolderKanban className="h-4 w-4" /> },
   { key: 'forums', to: '/forums', label: 'Forums', icon: <MessagesSquare className="h-4 w-4" /> },
-  { key: 'planner', to: '/planner', label: 'Planner', icon: <Compass className="h-4 w-4" /> },
+  { key: 'agents', to: '/agents', label: 'Agents', icon: <Bot className="h-4 w-4" /> },
   { key: 'suggestions', to: '/suggestions', label: 'Suggestions', icon: <Tags className="h-4 w-4" /> },
   { key: 'plans', to: '/plans', label: 'Plans', icon: <FolderTree className="h-4 w-4" /> },
   { key: 'templates', to: '/templates', label: 'Templates', icon: <FileText className="h-4 w-4" /> },
@@ -89,9 +89,8 @@ function AppShell() {
           <Route path="/forums" element={<ForumsPage />} />
           <Route path="/forums/:forumId" element={<ForumsPage />} />
           <Route path="/forums/:forumId/topics/:topicId" element={<ForumsPage />} />
-          <Route path="/planner" element={<PlannerPage />} />
-          <Route path="/planner/:db" element={<PlannerPage />} />
-          <Route path="/planner/:db/:id" element={<PlannerPage />} />
+          <Route path="/agents" element={<AgentsPage />} />
+          <Route path="/agents/:tab" element={<AgentsPage />} />
           <Route path="/suggestions" element={<SuggestionsPage />} />
           <Route path="/tasks/:id" element={<TaskDetailPage />} />
           <Route path="/projects" element={<ProjectsPage />} />

@@ -35,6 +35,6 @@ export function createAgentKind(): RefKind {
     },
     chipLabel: (ref) => `@${ref.canonical}`,
     // The Agents tab reads `?agent=` and opens that agent (id, provider or folder name).
-    open: (ref) => ({ type: 'route', to: `/planner/agents?agent=${encodeURIComponent(ref.canonical)}` }),
+    open: (ref) => ({ type: 'route', to: `/agents?agent=${encodeURIComponent(ref.canonical)}` }),
   }
 }
