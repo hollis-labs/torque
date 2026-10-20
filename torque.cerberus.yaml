@@ -10,6 +10,9 @@ resources:
     type: process
     project: torque
     connector: local
+    env: dev
+    owner: self
+    admin: self
     config:
       build_strategy:
         kind: make_standard
@@ -59,6 +62,9 @@ resources:
     type: process
     project: torque
     connector: local
+    env: dev
+    owner: self
+    admin: self
     config:
       auto_restart: false
       auto_start: false
@@ -88,6 +94,9 @@ resources:
     type: process
     project: torque
     connector: local
+    env: dev
+    owner: self
+    admin: self
     config:
       command:
         - npm
@@ -115,6 +124,9 @@ resources:
     type: process
     project: torque
     connector: local
+    env: dev
+    owner: self
+    admin: self
     config:
       command:
         - ./hack/torque-db-backup.sh
