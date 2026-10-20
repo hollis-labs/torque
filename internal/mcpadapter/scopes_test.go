@@ -22,7 +22,7 @@ import (
 // is refused for want of a mapping once auth enforces, and none is left open.
 func TestEveryToolHasAScope(t *testing.T) {
 	svc := setupServiceForScopes(t)
-	for _, f := range []string{"sprints", "projects", "epics", "collections", "planner"} {
+	for _, f := range []string{"sprints", "projects", "epics", "collections"} {
 		require.NoError(t, svc.Feature.Enable(f))
 	}
 	defs := New(svc, nil).Server().ToolDefinitions()

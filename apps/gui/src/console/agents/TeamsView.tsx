@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { EmptyState } from '@hollis-labs/sysop-ui'
-import { PixelRobot } from '@/components/planner/agent-activity'
+import { PixelRobot } from '@/components/agents/agent-activity'
 import { useAgentsClient } from './context'
 import { Field, inputCls, ListField } from './AgentEditor'
 import { blankTeamDraft, computeLifecyclePlan, slugify, teamDraftFrom, TEAM_ROLES, type TeamDraft, type TeamRecord } from './lifecycle'

@@ -19,7 +19,7 @@ describe('defaultAlertMapper', () => {
     expect(defaultAlertMapper(ev({ kind: KINDS.agentState, payload: { state: 'busy' } }))).toBeNull()
     const w = defaultAlertMapper(ev({ kind: KINDS.agentState, payload: { state: 'waiting', waitingFor: 'approval' }, subjects: [{ type: 'agent', id: 'a1' }] }))
     expect(w?.title).toBe('a1 is waiting')
-    expect(w?.primary?.href).toBe('/planner/agents')
+    expect(w?.primary?.href).toBe('/agents')
     const t = defaultAlertMapper(ev({ kind: KINDS.taskStateChanged, payload: { to: 'review', from: 'in_progress' }, subjects: [{ type: 'task', id: 'CW-1' }] }))
     expect(t?.title).toBe('CW-1 → review')
     expect(t?.primary?.href).toBe('/tasks/CW-1')

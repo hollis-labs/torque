@@ -9,7 +9,7 @@ export default function PrWorkspacePage() {
   const [search] = useSearchParams()
   const prRef = prRefFromParams(params)
   const navigate = useNavigate()
-  // Arrived from the inbox, a chip or a link: Back returns there. A fresh load falls back to the planner.
+  // Arrived from the inbox, a chip or a link: Back returns there. A fresh load falls back to operations.
   const canGoBack = useLocation().key !== 'default'
   if (!prRef) {
     return (
@@ -21,7 +21,7 @@ export default function PrWorkspacePage() {
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 border-b border-zinc-800/80 px-4 py-1.5">
-        <Link to="/planner" onClick={canGoBack ? (e) => { e.preventDefault(); navigate(-1) } : undefined} className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest text-zinc-500 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300">
+        <Link to="/operations" onClick={canGoBack ? (e) => { e.preventDefault(); navigate(-1) } : undefined} className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest text-zinc-500 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-300">
           <ChevronLeft className="h-3 w-3" /> Back
         </Link>
       </div>

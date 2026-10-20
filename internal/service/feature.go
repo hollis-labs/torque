@@ -8,7 +8,6 @@ var knownFeatures = map[string]bool{
 	"projects":    true,
 	"epics":       true,
 	"collections": true,
-	"planner":     true,
 	"forums":      true,
 	"judge":       true,
 }

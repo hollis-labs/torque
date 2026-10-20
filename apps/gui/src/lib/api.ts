@@ -14,20 +14,11 @@ import type {
   Comment,
   SSEEvent,
   FeatureFlags,
-  PlannerDb,
   Suggestion,
   JudgeStatus,
   JudgeSummary,
   JudgeBulkResult,
-  PlannerDatabaseInfo,
-  PlannerItem,
-  PlannerLink,
-  PlannerOrdered,
-  PlannerSchemaInfo,
-  PlannerSearchHit,
-  PlannerBoard,
-  PlannerTaskBrief,
-  PlannerWorkstreamTasks,
+  TaskBrief,
   Project,
   ProjectArtifact,
   Sprint,
@@ -121,7 +112,7 @@ export interface RunTimeSeries {
  * Marks every request as made by the GUI. The server records a state change
  * (a task transition, a checkpoint answer) as a human one only when this
  * header is present; an unmarked API call is recorded as an agent's. The
- * header is X-Client: browser, the one the planner already keys on. Send it on
+ * header is X-Client: browser. Send it on
  * every fetch, reads included, so a future write path cannot forget it.
  */
 export const GUI_CLIENT_HEADERS: Record<string, string> = { 'X-Client': 'browser' }
@@ -129,7 +120,7 @@ export const GUI_CLIENT_HEADERS: Record<string, string> = { 'X-Client': 'browser
 export class ApiError extends Error {
   status: number
   url?: string
-  /** Machine code from the server body (planner routes: invalid, conflict, not_found, feature_disabled). */
+  /** Machine code from the server body (service errors: invalid, conflict, not_found, feature_disabled). */
   code?: string
   /** Structured detail from the server body: validation errors, or the current item of a conflict. */
   details?: Record<string, unknown>
@@ -755,103 +746,9 @@ export class TorqueApiClient {
     return this.post(`/forums/topics/${encodeURIComponent(id)}/posts`, { body_md, ...(parent_post_id ? { parent_post_id } : {}), ...extras })
   }
 
-  // Planner (features.planner)
-  // -------------------------
-
-  /** Planner writes identify the browser, so the server records the owner as the author. */
-  private async plannerSend<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
-    const res = await fetch(this.url(`/planner${path}`), {
-      method,
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...GUI_CLIENT_HEADERS },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    })
-    return parseResponse<T>(res)
-  }
-
-  async plannerDatabases(): Promise<PlannerDatabaseInfo[]> {
-    return this.get<PlannerDatabaseInfo[]>('/planner/databases')
-  }
-
-  /** The board: curated workstreams by default, or scope 'all' for the activity feed (in flight, landed, pre-flight, holds). */
-  async plannerBoard(opts?: { scope?: 'curated' | 'all'; recent_hours?: number; active_hours?: number; limit?: number }, signal?: AbortSignal): Promise<PlannerBoard> {
-    return this.get<PlannerBoard>('/planner/board', { ...opts }, signal)
-  }
-
-  /** Live title and status of Torque task ids; an unknown id maps to null. */
-  async plannerTaskTitles(ids: string[], signal?: AbortSignal): Promise<Record<string, PlannerTaskBrief | null>> {
-    return this.get<Record<string, PlannerTaskBrief | null>>('/planner/torque-titles', { ids: ids.join(',') }, signal)
-  }
-
-  /** The Torque tasks behind a workstream (its projects and tag): counts per status and the open ones. */
-  async plannerWorkstreamTasks(id: string, signal?: AbortSignal): Promise<PlannerWorkstreamTasks> {
-    return this.get<PlannerWorkstreamTasks>(`/planner/workstreams/${encodeURIComponent(id)}/tasks`, undefined, signal)
-  }
-
-  async plannerSchema(db: PlannerDb): Promise<PlannerSchemaInfo> {
-    return this.get<PlannerSchemaInfo>(`/planner/schema/${db}`)
-  }
-
-  /** Every item of a database in manual order. Query parameters are exact-match filters. */
-  async plannerList(db: PlannerDb, opts?: { filters?: Record<string, string>; sort?: string }, signal?: AbortSignal): Promise<PlannerItem[]> {
-    return this.get<PlannerItem[]>(`/planner/${db}`, { ...opts?.filters, sort: opts?.sort }, signal)
-  }
-
-  async plannerGet(db: PlannerDb, id: string): Promise<PlannerItem> {
-    return this.get<PlannerItem>(`/planner/${db}/${encodeURIComponent(id)}`)
-  }
-
-  async plannerSearch(q: string, db?: PlannerDb, signal?: AbortSignal): Promise<PlannerSearchHit[]> {
-    return this.get<PlannerSearchHit[]>('/planner/search', { q, db }, signal)
-  }
-
-  async plannerCreate(db: PlannerDb, item: Record<string, unknown>): Promise<PlannerItem> {
-    return this.plannerSend<PlannerItem>('POST', `/${db}`, item)
-  }
-
-  /** Merge `patch` into an item; null removes a field. With `rev`, a stale rev is a 409 whose `details.current` is the item as it now is. */
-  async plannerUpdate(db: PlannerDb, id: string, patch: Record<string, unknown>, rev?: number): Promise<PlannerItem> {
-    return this.plannerSend<PlannerItem>('PATCH', `/${db}/${encodeURIComponent(id)}`, rev === undefined ? { patch } : { patch, rev })
-  }
-
-  async plannerComment(db: PlannerDb, id: string, text: string, kind?: 'comment' | 'decision'): Promise<PlannerItem> {
-    return this.plannerSend<PlannerItem>('POST', `/${db}/${encodeURIComponent(id)}/comments`, kind ? { text, kind } : { text })
-  }
-
-  async plannerLinkAdd(db: PlannerDb, id: string, link: PlannerLink): Promise<PlannerItem> {
-    return this.plannerSend<PlannerItem>('POST', `/${db}/${encodeURIComponent(id)}/links`, { link })
-  }
-
-  async plannerLinkRemove(db: PlannerDb, id: string, kind: string, ref: string): Promise<PlannerItem> {
-    return this.plannerSend<PlannerItem>('DELETE', `/${db}/${encodeURIComponent(id)}/links`, { kind, ref })
-  }
-
-  /** Give `ids` the order 10, 20, 30 ... in that sequence. */
-  async plannerReorder(db: PlannerDb, ids: string[]): Promise<PlannerOrdered[]> {
-    return this.plannerSend<PlannerOrdered[]>('POST', `/${db}/reorder`, { ids })
-  }
-
-  async plannerDecide(id: string, option: string, comment?: string): Promise<PlannerItem> {
-    return this.plannerSend<PlannerItem>('POST', `/decisions/${encodeURIComponent(id)}/decide`, comment ? { option, comment } : { option })
-  }
-
-  async plannerDefer(id: string, note?: string): Promise<PlannerItem> {
-    return this.plannerSend<PlannerItem>('POST', `/decisions/${encodeURIComponent(id)}/defer`, note ? { note } : {})
-  }
-
-  async plannerReopen(id: string): Promise<PlannerItem> {
-    return this.plannerSend<PlannerItem>('POST', `/decisions/${encodeURIComponent(id)}/reopen`, {})
-  }
-
-  async plannerInboxAdd(fields: { title: string; kind?: string; body?: string; path?: string }): Promise<PlannerItem> {
-    return this.plannerSend<PlannerItem>('POST', '/inbox', fields)
-  }
-
-  async plannerInboxPromote(id: string, toDb: PlannerDb, fields?: Record<string, unknown>): Promise<{ inbox: PlannerItem; item: PlannerItem }> {
-    return this.plannerSend('POST', `/inbox/${encodeURIComponent(id)}/promote`, fields ? { to_db: toDb, fields } : { to_db: toDb })
-  }
-
-  async plannerInboxDismiss(id: string, note?: string): Promise<PlannerItem> {
-    return this.plannerSend<PlannerItem>('POST', `/inbox/${encodeURIComponent(id)}/dismiss`, note ? { note } : {})
+  /** Live title and status of task ids; an unknown id maps to null. */
+  async taskTitles(ids: string[], signal?: AbortSignal): Promise<Record<string, TaskBrief | null>> {
+    return this.get<Record<string, TaskBrief | null>>('/tasks/titles', { ids: ids.join(',') }, signal)
   }
 
   // -------------------------

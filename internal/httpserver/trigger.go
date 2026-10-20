@@ -8,7 +8,7 @@ import (
 
 // GUIClientHeader marks a request as made by the Torque GUI (the explorer and
 // the Console). Torque's own web client sends X-Client: browser on every
-// request; the planner already keys on it. Together with the value below it is
+// request. Together with the value below it is
 // the only thing that makes a state change a human one.
 const (
 	GUIClientHeader = "X-Client"

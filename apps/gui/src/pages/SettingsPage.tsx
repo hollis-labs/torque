@@ -101,13 +101,6 @@ export default function SettingsPage() {
                       disabled={saving === 'forums'}
                       onCheckedChange={(v) => handleToggle('forums', v)}
                     />
-                    <FlagRow
-                      label="Planner"
-                      description="The portfolio planner: priorities, workstreams, roadmap, ideas, decisions, risks and an inbox. The MCP tools appear after the MCP process restarts."
-                      checked={!!flags.planner}
-                      disabled={saving === 'planner'}
-                      onCheckedChange={(v) => handleToggle('planner', v)}
-                    />
                   </>
                 ) : null}
               </CardContent>

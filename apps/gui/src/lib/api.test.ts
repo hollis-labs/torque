@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, TorqueApiClient } from './api'
+import { TorqueApiClient } from './api'
 
 function jsonResponse(body: unknown, init: Partial<ResponseInit> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -588,116 +588,6 @@ describe('remaining family cancellation', () => {
     }
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(fetch.mock.calls[0][1].signal).toBe(signal)
-  })
-})
-
-describe('TorqueApiClient planner', () => {
-  const client = new TorqueApiClient('/api/v1')
-  afterEach(() => vi.restoreAllMocks())
-
-  function stubFetch(body: unknown = {}, init: Partial<ResponseInit> = {}) {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(body, init))
-    globalThis.fetch = fetchMock as unknown as typeof fetch
-    return fetchMock
-  }
-  const call = (fetchMock: ReturnType<typeof vi.fn>) => {
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined]
-    return { url, method: init?.method ?? 'GET', headers: (init?.headers ?? {}) as Record<string, string>, body: init?.body ? JSON.parse(init.body as string) : undefined }
-  }
-
-  it('reads with GET, passing filters and sort as query parameters', async () => {
-    const f = stubFetch([])
-    await client.plannerList('risks', { filters: { severity: 'high' }, sort: '-title' })
-    const c = call(f)
-    expect(c.method).toBe('GET')
-    expect(c.url).toBe('/api/v1/planner/risks?severity=high&sort=-title')
-
-    const g = stubFetch([])
-    await client.plannerSearch('nanite plugin', 'roadmap')
-    expect(call(g).url).toBe('/api/v1/planner/search?q=nanite+plugin&db=roadmap')
-  })
-
-  it('escapes ids in paths', async () => {
-    const f = stubFetch({ id: 'x' })
-    await client.plannerGet('ideas', 'ID-a b/c')
-    expect(call(f).url).toBe('/api/v1/planner/ideas/ID-a%20b%2Fc')
-  })
-
-  it('writes identify the browser so the server records the owner', async () => {
-    const f = stubFetch({ id: 'RK-1' })
-    await client.plannerUpdate('risks', 'RK-1', { status: 'closed' }, 3)
-    const c = call(f)
-    expect(c.method).toBe('PATCH')
-    expect(c.url).toBe('/api/v1/planner/risks/RK-1')
-    expect(c.headers['X-Client']).toBe('browser')
-    expect(c.body).toEqual({ patch: { status: 'closed' }, rev: 3 })
-  })
-
-  it('omits rev from an update that does not ask for conflict detection', async () => {
-    const f = stubFetch({ id: 'RK-1' })
-    await client.plannerUpdate('risks', 'RK-1', { status: 'closed' })
-    expect(call(f).body).toEqual({ patch: { status: 'closed' } })
-  })
-
-  it('maps each action onto its route', async () => {
-    const cases: Array<[() => Promise<unknown>, string, string, unknown]> = [
-      [() => client.plannerCreate('risks', { title: 't' }), 'POST', '/api/v1/planner/risks', { title: 't' }],
-      [() => client.plannerComment('risks', 'RK-1', 'hi'), 'POST', '/api/v1/planner/risks/RK-1/comments', { text: 'hi' }],
-      [() => client.plannerComment('risks', 'RK-1', 'hi', 'decision'), 'POST', '/api/v1/planner/risks/RK-1/comments', { text: 'hi', kind: 'decision' }],
-      [() => client.plannerLinkAdd('risks', 'RK-1', { kind: 'pr', ref: 'x#1' }), 'POST', '/api/v1/planner/risks/RK-1/links', { link: { kind: 'pr', ref: 'x#1' } }],
-      [() => client.plannerLinkRemove('risks', 'RK-1', 'pr', 'x#1'), 'DELETE', '/api/v1/planner/risks/RK-1/links', { kind: 'pr', ref: 'x#1' }],
-      [() => client.plannerReorder('inbox', ['IN-2', 'IN-1']), 'POST', '/api/v1/planner/inbox/reorder', { ids: ['IN-2', 'IN-1'] }],
-      [() => client.plannerDecide('DEC-1', 'a'), 'POST', '/api/v1/planner/decisions/DEC-1/decide', { option: 'a' }],
-      [() => client.plannerDecide('DEC-1', 'a', 'why'), 'POST', '/api/v1/planner/decisions/DEC-1/decide', { option: 'a', comment: 'why' }],
-      [() => client.plannerDefer('DEC-1', 'later'), 'POST', '/api/v1/planner/decisions/DEC-1/defer', { note: 'later' }],
-      [() => client.plannerReopen('DEC-1'), 'POST', '/api/v1/planner/decisions/DEC-1/reopen', {}],
-      [() => client.plannerInboxAdd({ title: 'look' }), 'POST', '/api/v1/planner/inbox', { title: 'look' }],
-      [() => client.plannerInboxPromote('IN-1', 'ideas'), 'POST', '/api/v1/planner/inbox/IN-1/promote', { to_db: 'ideas' }],
-      [() => client.plannerInboxPromote('IN-1', 'risks', { severity: 'high' }), 'POST', '/api/v1/planner/inbox/IN-1/promote', { to_db: 'risks', fields: { severity: 'high' } }],
-      [() => client.plannerInboxDismiss('IN-1', 'dup'), 'POST', '/api/v1/planner/inbox/IN-1/dismiss', { note: 'dup' }],
-    ]
-    for (const [run, method, url, body] of cases) {
-      const f = stubFetch({})
-      await run()
-      expect(call(f), `${method} ${url}`).toMatchObject({ method, url, body })
-    }
-  })
-
-  it('reads the board, task titles and a workstream\'s tasks with GET', async () => {
-    const f = stubFetch({})
-    await client.plannerBoard({ recent_hours: 24, limit: 5 })
-    expect(call(f)).toMatchObject({ method: 'GET', url: '/api/v1/planner/board?recent_hours=24&limit=5' })
-
-    const g = stubFetch({})
-    await client.plannerBoard()
-    expect(call(g).url).toBe('/api/v1/planner/board')
-
-    const h = stubFetch({})
-    await client.plannerTaskTitles(['CW-20261011-0050', 'CW-20261011-0051'])
-    expect(call(h)).toMatchObject({ method: 'GET', url: '/api/v1/planner/torque-titles?ids=CW-20261011-0050%2CCW-20261011-0051' })
-
-    const i = stubFetch({})
-    await client.plannerWorkstreamTasks('WS-a b')
-    expect(call(i)).toMatchObject({ method: 'GET', url: '/api/v1/planner/workstreams/WS-a%20b/tasks' })
-  })
-
-  it('keeps the code and details of a planner error', async () => {
-    const current = { id: 'RK-1', title: 't', rev: 7 }
-    stubFetch({ error: 'conflict: rev mismatch', code: 'conflict', details: { current } }, { status: 409 })
-    const err = await client.plannerUpdate('risks', 'RK-1', {}, 1).catch((e: unknown) => e)
-    expect(err).toBeInstanceOf(ApiError)
-    expect((err as ApiError).status).toBe(409)
-    expect((err as ApiError).code).toBe('conflict')
-    expect((err as ApiError).details).toEqual({ current })
-    expect((err as ApiError).message).toBe('conflict: rev mismatch')
-  })
-
-  it('still reports plain errors without a code', async () => {
-    stubFetch({ error: 'boom' }, { status: 500 })
-    const err = (await client.plannerDatabases().catch((e: unknown) => e)) as ApiError
-    expect(err.message).toBe('boom')
-    expect(err.code).toBeUndefined()
-    expect(err.details).toBeUndefined()
   })
 })
 

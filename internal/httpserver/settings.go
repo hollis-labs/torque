@@ -80,13 +80,11 @@ func (s *Server) getFeatures(w http.ResponseWriter, r *http.Request) {
 	epics, _ := s.svc.Settings.Get("features.epics")
 	collections, _ := s.svc.Settings.Get("features.collections")
 	forums, _ := s.svc.Settings.Get("features.forums")
-	planner, _ := s.svc.Settings.Get("features.planner")
 	writeJSON(w, http.StatusOK, map[string]bool{
 		"sprints":     sprints == "true",
 		"projects":    projects == "true",
 		"epics":       epics == "true",
 		"collections": collections == "true",
-		"planner":     planner == "true",
 		"forums":      forums == "true",
 	})
 }

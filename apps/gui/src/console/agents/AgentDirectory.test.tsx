@@ -47,7 +47,7 @@ it('lists agents, selects one and shows its detail with a fleet link', async () 
   expect(within(detail).getByText('NOT RUNNING')).toBeTruthy()
   expect(within(detail).queryByRole('button')).toBeNull()
   fireEvent.click(within(list).getByText('Team Worker'))
-  expect(screen.getByRole('link', { name: 'open in fleet' }).getAttribute('href')).toBe('/planner/agents')
+  expect(screen.getByRole('link', { name: 'open in fleet' }).getAttribute('href')).toBe('/agents')
 })
 
 it('narrows the list from the search box and shows an empty state', async () => {

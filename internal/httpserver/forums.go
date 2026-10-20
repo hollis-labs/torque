@@ -61,7 +61,7 @@ func (s *Server) forumHandler(pattern string, fields []string) http.HandlerFunc 
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Gate before parsing or contacting Tether.
 		if err := s.svc.Feature.Require("forums"); err != nil {
-			writePlannerError(w, err)
+			writeServiceError(w, err)
 			return
 		}
 		path := pattern
@@ -142,7 +142,7 @@ func (s *Server) forumHandler(pattern string, fields []string) http.HandlerFunc 
 				return
 			}
 			if errors.As(err, &disabled) {
-				writePlannerError(w, err)
+				writeServiceError(w, err)
 				return
 			}
 			writeError(w, 503, "Forums unavailable")

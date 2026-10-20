@@ -87,7 +87,7 @@ export function LifecyclePanel({ agent, onClone, onChanged }: LifecyclePanelProp
               <ImpactSummary impact={impact} />
               {impactTotal(impact) === 0 ? <p className="mt-2 text-[13px] text-zinc-400">Nothing depends on this agent right now.</p> : (
                 <ul aria-label="Impact detail" className="mt-3 space-y-1 text-[13px]">
-                  {impact.sessions.count > 0 && <li className="text-amber-300">{impact.sessions.count} running session{impact.sessions.count === 1 ? '' : 's'} ({impact.sessions.state}) — <Link to="/planner/agents" className="underline">open in fleet</Link></li>}
+                  {impact.sessions.count > 0 && <li className="text-amber-300">{impact.sessions.count} running session{impact.sessions.count === 1 ? '' : 's'} ({impact.sessions.state}) — <Link to="/agents" className="underline">open in fleet</Link></li>}
                   {[...impact.tasks, ...impact.workstreams].map((a) => <li key={a.id} className="text-zinc-300"><span className="font-mono text-[11px] uppercase tracking-wider text-zinc-500">{a.target.type}</span> {a.target.id}{a.target.label ? <span className="text-zinc-500"> · {a.target.label}</span> : null}</li>)}
                   {impact.teams.map((t) => <li key={t.teamId} className={t.soleCoordinator ? 'text-rose-300' : 'text-zinc-300'}><span className="font-mono text-[11px] uppercase tracking-wider text-zinc-500">team</span> {t.teamName} as {t.role}{t.soleCoordinator ? ' — the only coordinator' : ''}</li>)}
                 </ul>
