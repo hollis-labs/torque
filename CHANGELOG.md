@@ -784,6 +784,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
+- Go toolchain 1.26.10 (`go` directive and CI pin) for GO-2026-6809 (crypto/x509); no behavior change.
 - An ACP launch (Copilot, Pi, an `acp-*` runtime kind) is write-protected like
   any other (CW-20261001-0162). Since #176 an ACP boot was refused while
   protection was on, because go-agent-wrapper had no protect-only sandbox for
