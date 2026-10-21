@@ -1,6 +1,6 @@
 module github.com/hollis-labs/torque
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.71.0
