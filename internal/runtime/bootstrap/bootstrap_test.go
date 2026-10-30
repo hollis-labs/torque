@@ -93,5 +93,5 @@ func TestNewExecutorRegistryNames(t *testing.T) {
 	reg := bootstrap.NewExecutorRegistry()
 	assert.Equal(t, []string{"mock"}, reg.List())
 	require.NoError(t, bootstrap.Executors(reg, deps))
-	assert.Equal(t, []string{"api", "cli", "mock"}, reg.List())
+	assert.Equal(t, []string{"api", "cli", "mock", "tether"}, reg.List())
 }

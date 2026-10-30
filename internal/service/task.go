@@ -221,7 +221,9 @@ func (s *TaskService) validateExecutor(executor string) error {
 		return nil
 	}
 	names := s.registeredExecutors()
-	if len(names) == 0 || slices.Contains(names, executor) {
+	// "tether" is a built-in (bootstrap registers it in every process), so it
+	// is accepted even from a process whose registry was built without it.
+	if len(names) == 0 || executor == "tether" || slices.Contains(names, executor) {
 		return nil
 	}
 	return &ValidationError{
