@@ -29,6 +29,7 @@ Example: {"name":"Torque","repo_path":"/Users/me/Projects/torque"}`),
 		withString("context_paths", desc("JSON array of paths providing background context")),
 		withString("permissions", desc("JSON object of permission key/value pairs")),
 		withString("rules", desc("JSON array of rule strings agents must follow in this project")),
+		withString("execution_defaults", desc("JSON object of task defaults for this project: executor, launch_profile, agent_profile, on_done (close|review|notify), max_retries, quality_gates[]. Applied to tasks created in the project when neither the task nor its template sets the field (task > template > project > global).")),
 	), a.handleProjectCreate)
 
 	a.addTool(newTool("torque_project_get",
@@ -56,6 +57,7 @@ Example: {"id":"PRJ-20260820-0001","status":"inactive"}`),
 		withString("context_paths", desc("JSON array replacing the context_paths set; empty array/string clears")),
 		withString("permissions", desc("JSON object replacing the permissions map; empty string clears")),
 		withString("rules", desc("JSON array replacing the rules set; empty array/string clears")),
+		withString("execution_defaults", desc("JSON object replacing the project execution defaults (executor, launch_profile, agent_profile, on_done, max_retries, quality_gates[]); empty string/object clears")),
 	), a.handleProjectUpdate)
 
 	a.addTool(newTool("torque_project_list",
@@ -137,6 +139,8 @@ func (a *Adapter) handleProjectCreate(ctx context.Context, req map[string]any) (
 		RepoPath:    reqStr(req, "repo_path"),
 		AgentPath:   reqStr(req, "agent_path"),
 		Icon:        reqStr(req, "icon"),
+
+		ExecutionDefaults: reqStr(req, "execution_defaults"),
 	}
 	if reqHasArg(req, "status") {
 		status := reqStr(req, "status")
@@ -264,6 +268,16 @@ func (a *Adapter) handleProjectUpdate(ctx context.Context, req map[string]any) (
 			f.set(&ns)
 			hasUpdate = true
 		}
+	}
+
+	if _, ok := args["execution_defaults"]; ok {
+		raw := reqStr(req, "execution_defaults")
+		ns := sql.NullString{}
+		if raw != "" && raw != "{}" {
+			ns = sql.NullString{String: raw, Valid: true}
+		}
+		update.ExecutionDefaults = &ns
+		hasUpdate = true
 	}
 
 	if _, ok := args["permissions"]; ok {

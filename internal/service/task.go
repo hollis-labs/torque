@@ -263,6 +263,9 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	if input.Title == "" {
 		return nil, &ValidationError{Field: "title", Message: "title is required"}
 	}
+	// Precedence task > template > project > global: the template already
+	// filled input, so the project fills only what is still unset.
+	s.applyProjectDefaults(&input)
 
 	priority := input.Priority
 	if priority == 0 {

@@ -10,6 +10,7 @@ import (
 type ProjectService struct {
 	store   *sqlstore.Store
 	feature *FeatureService
+	tasks   *TaskService // validates executor and profile names in execution defaults
 }
 
 // ProjectCreateInput holds user-facing fields for creating a project.
@@ -25,6 +26,8 @@ type ProjectCreateInput struct {
 	Rules        []string
 	Icon         string
 	Status       *string
+	// ExecutionDefaults is a JSON object; see ProjectExecutionDefaults.
+	ExecutionDefaults string
 }
 
 type ProjectArtifactCreateInput struct {
@@ -56,6 +59,13 @@ func (s *ProjectService) Create(input ProjectCreateInput) (*sqlstore.ProjectReco
 	if err := validateRepoPath(input.RepoPath); err != nil {
 		return nil, err
 	}
+	var execDefaults sql.NullString
+	if input.ExecutionDefaults != "" {
+		execDefaults = sql.NullString{String: input.ExecutionDefaults, Valid: true}
+		if err := s.validateExecutionDefaults(execDefaults, s.tasks); err != nil {
+			return nil, err
+		}
+	}
 	status := "active"
 	if input.Status != nil {
 		if err := validateProjectStatus(*input.Status); err != nil {
@@ -77,6 +87,8 @@ func (s *ProjectService) Create(input ProjectCreateInput) (*sqlstore.ProjectReco
 		AgentPath:   input.AgentPath,
 		Icon:        input.Icon,
 		Status:      status,
+
+		ExecutionDefaults: execDefaults,
 	}
 	if len(input.ReadPaths) > 0 {
 		record.ReadPaths = sql.NullString{String: marshalJSON(input.ReadPaths), Valid: true}
@@ -133,6 +145,11 @@ func (s *ProjectService) Update(id string, update sqlstore.ProjectUpdate) error 
 	}
 	if update.Status != nil {
 		if err := validateProjectStatus(*update.Status); err != nil {
+			return err
+		}
+	}
+	if update.ExecutionDefaults != nil {
+		if err := s.validateExecutionDefaults(*update.ExecutionDefaults, s.tasks); err != nil {
 			return err
 		}
 	}

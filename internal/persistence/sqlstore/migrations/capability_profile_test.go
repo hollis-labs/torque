@@ -58,6 +58,7 @@ func TestMigration038PopulatedPostgres(t *testing.T) {
  CREATE TABLE tasks(id TEXT PRIMARY KEY, kind TEXT, status TEXT, parent_id TEXT, metadata TEXT);
  CREATE TABLE task_templates(id TEXT PRIMARY KEY, version INTEGER);
  CREATE TABLE sessions(id TEXT PRIMARY KEY);
+ CREATE TABLE projects(id TEXT PRIMARY KEY);
  CREATE TABLE runs(id SERIAL PRIMARY KEY, task_id TEXT REFERENCES tasks(id));
  INSERT INTO tasks(id) VALUES ('T1');
  INSERT INTO task_templates(id, version) VALUES ('TT1', 1);
@@ -78,6 +79,7 @@ func TestMigration038PopulatedSQLite(t *testing.T) {
  CREATE TABLE tasks(id TEXT PRIMARY KEY, kind TEXT, status TEXT, parent_id TEXT, metadata TEXT);
  CREATE TABLE task_templates(id TEXT PRIMARY KEY, version INTEGER);
  CREATE TABLE sessions(id TEXT PRIMARY KEY);
+ CREATE TABLE projects(id TEXT PRIMARY KEY);
  CREATE TABLE runs(id INTEGER PRIMARY KEY, task_id TEXT REFERENCES tasks(id));
  INSERT INTO tasks(id) VALUES ('T1');
  INSERT INTO task_templates(id, version) VALUES ('TT1', 1);

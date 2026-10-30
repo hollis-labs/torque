@@ -23,9 +23,12 @@ type ProjectRecord struct {
 	Rules        sql.NullString
 	Status       string
 	Icon         string
-	ArchivedAt   sql.NullTime
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// ExecutionDefaults is a JSON object of task defaults; see
+	// service.ProjectExecutionDefaults (CW-20261030-0208).
+	ExecutionDefaults sql.NullString
+	ArchivedAt        sql.NullTime
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // ProjectFilter holds optional filter criteria for ListProjects.
@@ -64,6 +67,8 @@ type ProjectUpdate struct {
 	Rules        *sql.NullString
 	Status       *string
 	Icon         *string
+
+	ExecutionDefaults *sql.NullString
 }
 
 // CreateProject inserts a new project.
@@ -72,9 +77,9 @@ func (s *Store) CreateProject(p *ProjectRecord) error {
 		p.Status = "active"
 	}
 	_, err := s.db.Exec(`INSERT INTO projects (
-		id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.ID, p.Name, p.Description, p.RepoPath, p.AgentPath, p.ReadPaths, p.WritePaths, p.ContextPaths, p.Permissions, p.Rules, p.Status, p.Icon,
+		id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, execution_defaults
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Name, p.Description, p.RepoPath, p.AgentPath, p.ReadPaths, p.WritePaths, p.ContextPaths, p.Permissions, p.Rules, p.Status, p.Icon, p.ExecutionDefaults,
 	)
 	return err
 }
@@ -82,8 +87,8 @@ func (s *Store) CreateProject(p *ProjectRecord) error {
 // GetProject fetches a single project by ID.
 func (s *Store) GetProject(id string) (*ProjectRecord, error) {
 	p := &ProjectRecord{}
-	err := s.ReadDB().QueryRow(`SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, archived_at, created_at, updated_at FROM projects WHERE id = ?`, id).Scan(
-		&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt,
+	err := s.ReadDB().QueryRow(`SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, execution_defaults, archived_at, created_at, updated_at FROM projects WHERE id = ?`, id).Scan(
+		&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.ExecutionDefaults, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("project %s not found", id)
@@ -131,7 +136,7 @@ func projectCursorArg(sortBy, sv string) (any, error) {
 // ListTasks for the reference implementation this mirrors. Archived rows
 // (archived_at IS NOT NULL) are excluded unless f.IncludeArchived is true.
 func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
-	query := `SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, archived_at, created_at, updated_at FROM projects`
+	query := `SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, execution_defaults, archived_at, created_at, updated_at FROM projects`
 
 	conditions, args := projectListPredicates(f)
 
@@ -188,7 +193,7 @@ func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
 	var projects []ProjectRecord
 	for rows.Next() {
 		var p ProjectRecord
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.ExecutionDefaults, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -244,6 +249,10 @@ func (s *Store) UpdateProject(id string, u ProjectUpdate) error {
 	if u.Icon != nil {
 		sets = append(sets, "icon = ?")
 		args = append(args, *u.Icon)
+	}
+	if u.ExecutionDefaults != nil {
+		sets = append(sets, "execution_defaults = ?")
+		args = append(args, *u.ExecutionDefaults)
 	}
 
 	if len(sets) == 0 {
