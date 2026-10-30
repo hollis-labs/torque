@@ -51,7 +51,7 @@ func NewEngine(mode Mode, rules *RuleSet) *Engine {
 		mode:            mode,
 		rules:           rules,
 		sessionGrants:   make(map[string]map[string]Decision),
-		approvalTimeout: 60 * time.Second,
+		approvalTimeout: 10 * time.Minute,
 	}
 }
 
