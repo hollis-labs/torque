@@ -264,6 +264,7 @@ func (e *Executor) watch(runCtx, parent context.Context, sid string, reapDur tim
 	boundWS := workstream != ""
 	pollErrs := 0
 	stalled := false
+	abnormal := false // a state change to killed/failed, or a non-zero exit, was seen
 
 	for {
 		st, serr := e.sessions.GetSession(runCtx, sid)
@@ -290,14 +291,26 @@ func (e *Executor) watch(runCtx, parent context.Context, sid string, reapDur tim
 			emit("poll error (%d): %v", pollErrs, serr)
 		}
 
-		// New events, oldest first.
-		if evs, eerr := e.sessions.SessionEvents(runCtx, sid, 100, 0); eerr == nil {
-			sort.Slice(evs, func(i, j int) bool { return evs[i].Seq < evs[j].Seq })
+		// New events, oldest first. The events endpoint is newest-first and
+		// paged, so walk back until we reach what we have already seen: a busy
+		// streaming session can emit more than one page between polls.
+		evs, eerr := e.newEvents(runCtx, sid, lastSeq)
+		if eerr == nil {
 			for _, ev := range evs {
-				if ev.Seq <= lastSeq {
+				lastSeq = ev.Seq
+				if ev.Kind == tetherclient.EventStateChanged {
+					var sc struct {
+						To       string `json:"to"`
+						ExitCode *int   `json:"exit_code"`
+					}
+					if json.Unmarshal([]byte(ev.PayloadJSON), &sc) == nil {
+						if sc.To == tetherclient.StateKilled || sc.To == tetherclient.StateFailed ||
+							(sc.ExitCode != nil && *sc.ExitCode != 0) {
+							abnormal = true
+						}
+					}
 					continue
 				}
-				lastSeq = ev.Seq
 				to, ok := ev.TurnOutput()
 				if !ok {
 					continue
@@ -321,7 +334,7 @@ func (e *Executor) watch(runCtx, parent context.Context, sid string, reapDur tim
 
 		if serr == nil && tetherclient.IsTerminalState(st.State) {
 			e.fillRoutedText(runCtx, sid, final)
-			return terminal(st, final), nil
+			return terminal(st, final, abnormal), nil
 		}
 
 		// A final turn with the session still alive means it went idle. The
@@ -374,9 +387,41 @@ func (e *Executor) fillRoutedText(ctx context.Context, sid string, final *tether
 	}
 }
 
+// newEvents returns the events with seq > after, oldest first, paging back
+// through the newest-first endpoint until it reaches events already seen.
+func (e *Executor) newEvents(ctx context.Context, sid string, after int64) ([]tetherclient.Event, error) {
+	const pageSize, maxPages = 200, 25
+	var out []tetherclient.Event
+	var cursor int64
+	for page := 0; page < maxPages; page++ {
+		evs, err := e.sessions.SessionEvents(ctx, sid, pageSize, cursor)
+		if err != nil {
+			return nil, err
+		}
+		reached := len(evs) < pageSize
+		oldest := int64(0)
+		for _, ev := range evs {
+			if ev.Seq <= after {
+				reached = true
+				continue
+			}
+			out = append(out, ev)
+			if oldest == 0 || ev.Seq < oldest {
+				oldest = ev.Seq
+			}
+		}
+		if reached || oldest == 0 {
+			break
+		}
+		cursor = oldest
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	return out, nil
+}
+
 func (e *Executor) cfgStopGrace() time.Duration { return e.cfg.StopGrace }
 
-func terminal(st *tetherclient.SessionState, final *tetherclient.TurnOutput) *watchResult {
+func terminal(st *tetherclient.SessionState, final *tetherclient.TurnOutput, abnormal bool) *watchResult {
 	code := -1
 	if st.ExitCode != nil {
 		code = *st.ExitCode
@@ -391,6 +436,12 @@ func terminal(st *tetherclient.SessionState, final *tetherclient.TurnOutput) *wa
 	}
 	switch st.State {
 	case tetherclient.StateCompleted:
+		if abnormal {
+			// Tether reports a stopped session as killed and then settles it
+			// to `completed` with no exit code; the state change history is
+			// the only record that it did not finish by itself.
+			return over(&executor.ExecutionResult{Status: "failed", Reason: "tether session was stopped or killed before a final turn", ExitCode: &code})
+		}
 		return over(&executor.ExecutionResult{Status: "done", Reason: "tether session exited 0 without a final turn output", ExitCode: &code})
 	case tetherclient.StateKilled:
 		return over(&executor.ExecutionResult{Status: "failed", Reason: "tether session was stopped before a final turn", ExitCode: &code})

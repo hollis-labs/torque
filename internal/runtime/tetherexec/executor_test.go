@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -123,8 +124,16 @@ func (f *fakeTether) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": s.id, "launch_id": "L", "state": s.state, "exit_code": s.exit, "workstream_id": "ws-9"})
 	case r.Method == http.MethodGet && len(parts) == 3 && parts[2] == "events":
 		s := f.sessions[parts[1]]
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		cursor, _ := strconv.ParseInt(r.URL.Query().Get("cursor"), 10, 64)
 		evs := make([]tetherclient.Event, 0, len(s.events))
 		for i := len(s.events) - 1; i >= 0; i-- { // newest first, like Tether
+			if cursor > 0 && s.events[i].Seq >= cursor {
+				continue
+			}
+			if limit > 0 && len(evs) >= limit {
+				break
+			}
 			evs = append(evs, s.events[i])
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"events": evs})
@@ -446,4 +455,42 @@ func TestQuestionTurnIsNotCompletion(t *testing.T) {
 	r := <-done
 	require.Equal(t, "failed", r.Status, "an unanswered question runs to the timeout, it is not success")
 	require.Contains(t, r.Reason, "timed out")
+}
+
+// Tether reports an externally stopped session as killed and then settles it
+// to completed with no exit code. Without a final turn that must not be done.
+func TestStoppedExternally_KilledThenCompletedIsFailed(t *testing.T) {
+	ex, f, _ := setup(t, Config{})
+	done := make(chan *executor.ExecutionResult, 1)
+	go func() {
+		r, _ := ex.Run(context.Background(), job(), nil)
+		done <- r
+	}()
+	s := waitSession(t, f)
+	f.emit(s.id, "session.state_changed", map[string]any{"from": "running", "to": "killed", "exit_code": 143})
+	f.emit(s.id, "session.state_changed", map[string]any{"from": "killed", "to": "completed", "exit_code": nil})
+	f.mu.Lock()
+	s.state = "completed"
+	s.exit = nil
+	f.mu.Unlock()
+	r := <-done
+	require.Equal(t, "failed", r.Status)
+	require.Contains(t, r.Reason, "stopped or killed")
+}
+
+// A busy stream can push the final turn_output more than one page back.
+func TestFinalTurnBeyondFirstEventPage(t *testing.T) {
+	ex, f, _ := setup(t, Config{})
+	done := make(chan *executor.ExecutionResult, 1)
+	go func() {
+		r, _ := ex.Run(context.Background(), job(), nil)
+		done <- r
+	}()
+	s := waitSession(t, f)
+	finalEvent(f, s.id)
+	for i := 0; i < 450; i++ {
+		f.emit(s.id, "session.output", map[string]any{"data": "x"})
+	}
+	r := <-done
+	require.Equal(t, "done", r.Status)
 }
