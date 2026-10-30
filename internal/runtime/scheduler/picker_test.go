@@ -309,3 +309,21 @@ func TestPickerInternalRequiresAgentProfile(t *testing.T) {
 	assert.Len(t, picked, 0)
 	assert.Equal(t, 1, decisions.Counts[scheduler.SkipReasonEmptyProfile])
 }
+
+// The tether executor takes its launch id from task metadata or
+// TORQUE_TETHER_LAUNCH, not from a CLI profile, so a tether task with no
+// profile selector is still eligible (found in smoke test B).
+func TestPickerTetherTaskNeedsNoProfile(t *testing.T) {
+	store := setupPickerStore(t)
+	picker := scheduler.NewPicker(store)
+
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: "CW-TETHER-NOPROF", Title: "tether, no profile", Status: "todo",
+		Priority: 2, Kind: "agent", Executor: "tether", AgentProfile: "",
+	}))
+
+	picked, decisions, err := picker.Pick(10)
+	require.NoError(t, err)
+	require.Len(t, picked, 1)
+	assert.Equal(t, 0, decisions.Counts[scheduler.SkipReasonEmptyProfile])
+}

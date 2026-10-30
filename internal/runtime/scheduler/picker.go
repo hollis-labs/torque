@@ -254,7 +254,11 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 		// kind=internal; launch_profile addition is the 2026-05-26
 		// launch-profile refactor.)
 		hasCapabilityBlock := task.Role != "" || task.Tier != "" || (task.CapabilityProfile.Valid && task.CapabilityProfile.String != "")
-		if (task.Kind == "agent" || task.Kind == "internal") && task.AgentProfile == "" && task.LaunchProfile == "" && !hasCapabilityBlock {
+		if (task.Kind == "agent" || task.Kind == "internal") && task.AgentProfile == "" && task.LaunchProfile == "" && !hasCapabilityBlock &&
+			// The tether executor takes its launch id from task metadata
+			// (tether_launch) or TORQUE_TETHER_LAUNCH and ignores the CLI
+			// profile; its own Validate refuses a job with no launch.
+			task.Executor != "tether" {
 			record(task.ID, SkipReasonEmptyProfile)
 			continue
 		}
