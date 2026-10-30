@@ -77,13 +77,13 @@ func TestCheckpointResponseDispatcher_SessionPresent_EmitsBreadcrumbAndAttemptsR
 	// Plant a sessions row that DispatchResponse will pick up. The row
 	// doesn't need to be live — ResumeSession reads AgentProfile +
 	// Workdir + TaskID + ResumeHint off the persisted row regardless of
-	// state. No profile is configured, so the session's "default" profile
-	// boots no runtime: ResumeSession boots fresh (and fails), and the
+	// state. The session names a profile that no longer
+	// exists, so it boots no runtime: ResumeSession boots fresh (and fails), and the
 	// breadcrumb's used_resume says so.
 	const sessID = "SES-TEST-ALPHA4"
 	rec := &sqlstore.SessionRecord{
 		ID:           sessID,
-		AgentProfile: "default",
+		AgentProfile: "retired-profile",
 		Provider:     "claude",
 		RuntimeID:    "torque-cli/claude",
 		RuntimeKind:  "cli",

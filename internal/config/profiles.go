@@ -531,6 +531,9 @@ func GetProfileOrDefault(source ProfileSource, name string) AgentProfile {
 	if p, ok := profiles["default"]; ok {
 		return p
 	}
+	if name == "" {
+		return builtinProfiles[DefaultProfileName]
+	}
 	// EDGE 1 (CW-20260517-0011): the bare zero-value fallback used to be
 	// fully silent — a misspelled or wrong-registry agent_profile name
 	// sailed through here and only blew up much later as the misleading
@@ -547,6 +550,12 @@ func GetProfileOrDefault(source ProfileSource, name string) AgentProfile {
 	}
 	return AgentProfile{}
 }
+
+// DefaultProfileName is the profile used when a task, template or session
+// names none. profiles.yaml may define its own `default`; without one the
+// builtin below applies, so an absent profile never resolves to a zero
+// AgentProfile ("profile has empty provider", CW-20261030-0207).
+const DefaultProfileName = "default"
 
 // UnknownProfileError reports an agent_profile name that did not resolve
 // against the agent_profiles registry in profiles.yaml. It is
@@ -595,10 +604,10 @@ func ResolveProfile(profiles ProfileMap, name string) (AgentProfile, error) {
 			Known: ProfileNames(profiles),
 		}
 	}
-	if p, ok := profiles["default"]; ok {
+	if p, ok := profiles[DefaultProfileName]; ok {
 		return p, nil
 	}
-	return AgentProfile{}, &UnknownProfileError{Name: "default", Known: ProfileNames(profiles)}
+	return builtinProfiles[DefaultProfileName], nil
 }
 
 // ProfileNames returns the sorted list of profile keys for error
@@ -674,6 +683,19 @@ func cloneProfileMap(in ProfileMap) ProfileMap {
 // configured profiles.yaml still gets a working substrate-spawned agent
 // (cost stays cost_source='unknown' for them, which is honest).
 var builtinProfiles = ProfileMap{
+	// Default (CW-20261030-0207). Used when no profile is named and
+	// profiles.yaml has no `default` key. Claude Code over streaming-stdio
+	// with the safe non-interactive permission posture (acceptEdits).
+	DefaultProfileName: {
+		Executor:       "cli",
+		Provider:       "claude-code",
+		Command:        "claude",
+		OutputFormat:   "stream-json",
+		TimeoutSeconds: 1800,
+		RuntimeKind:    "streaming-stdio",
+		PermissionMode: string(DefaultPermissionMode),
+	},
+
 	// Reviewer end-agent (CW-20260503-0019, S2.3, V1). Stamped on the
 	// kind=internal task the lifecycle hook creates when a kind=agent
 	// task transitions to `review`. cli + opencode mirrors the dogfood

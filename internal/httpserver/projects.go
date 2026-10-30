@@ -1,6 +1,8 @@
 package httpserver
 
 import (
+	"database/sql"
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -24,8 +26,12 @@ func projectJSON(p *sqlstore.ProjectRecord) map[string]interface{} {
 		"rules":         parseStringArray(p.Rules),
 		"status":        p.Status,
 		"icon":          p.Icon,
-		"created_at":    p.CreatedAt,
-		"updated_at":    p.UpdatedAt,
+		"execution_defaults": func() any {
+			d, _ := service.ParseProjectExecutionDefaults(p.ExecutionDefaults)
+			return d
+		}(),
+		"created_at": p.CreatedAt,
+		"updated_at": p.UpdatedAt,
 	}
 }
 
@@ -138,10 +144,17 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		Rules        []string          `json:"rules"`
 		Icon         string            `json:"icon"`
 		Status       *string           `json:"status,omitempty"`
+
+		ExecutionDefaults *service.ProjectExecutionDefaults `json:"execution_defaults,omitempty"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
+	}
+	execDefaults := ""
+	if req.ExecutionDefaults != nil {
+		b, _ := json.Marshal(req.ExecutionDefaults)
+		execDefaults = string(b)
 	}
 
 	project, err := s.svc.Project.Create(service.ProjectCreateInput{
@@ -156,6 +169,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		Rules:        req.Rules,
 		Icon:         req.Icon,
 		Status:       req.Status,
+
+		ExecutionDefaults: execDefaults,
 	})
 	if err != nil {
 		if _, ok := err.(*service.ValidationError); ok {
@@ -188,6 +203,8 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		Rules        *[]string          `json:"rules,omitempty"`
 		Status       *string            `json:"status,omitempty"`
 		Icon         *string            `json:"icon,omitempty"`
+
+		ExecutionDefaults *service.ProjectExecutionDefaults `json:"execution_defaults,omitempty"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -215,6 +232,11 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Rules != nil {
 		update.Rules = nullJSONString(*req.Rules)
+	}
+	if req.ExecutionDefaults != nil {
+		b, _ := json.Marshal(req.ExecutionDefaults)
+		ns := sql.NullString{String: string(b), Valid: string(b) != "{}"}
+		update.ExecutionDefaults = &ns
 	}
 
 	if err := s.svc.Project.Update(id, update); err != nil {

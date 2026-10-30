@@ -61,7 +61,7 @@ func New(store *sqlstore.Store) *Service {
 		Settings:   &SettingsService{store: store},
 		Feature:    feature,
 		Sprint:     &SprintService{store: store, feature: feature, task: task},
-		Project:    &ProjectService{store: store, feature: feature},
+		Project:    &ProjectService{store: store, feature: feature, tasks: task},
 		Epic:       &EpicService{store: store, feature: feature},
 		Collection: &CollectionService{store: store, feature: feature},
 		Forums:     &ForumsService{feature: feature},

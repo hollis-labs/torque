@@ -169,6 +169,38 @@ type TaskService struct {
 	registeredExecutors func() []string
 	// sourceControl reads PR state for the landing gate; see SetSourceControl.
 	sourceControl landing.SourceControl
+	// profileValidator checks a launch_profile / agent_profile pair against
+	// the profile registry; nil disables the check. See SetProfileValidator.
+	profileValidator func(launchProfile, agentProfile string) error
+}
+
+// SetProfileValidator installs the check Create, Update and template writes
+// use to reject a launch_profile or agent_profile that does not resolve
+// (CW-20261030-0207). Empty values mean the default profile and always pass.
+// nil (the default) disables the check. Install once at bootstrap.
+func (s *TaskService) SetProfileValidator(v func(launchProfile, agentProfile string) error) {
+	s.profileValidator = v
+}
+
+// validateProfiles checks each supplied selector on its own, so a typo in
+// agent_profile is caught even when launch_profile is valid.
+func (s *TaskService) validateProfiles(executorName, launchProfile, agentProfile string) error {
+	// The mock executor never reads a profile, and a tether task's
+	// launch_profile is a Tether launch id the profile registry does not know.
+	if s == nil || s.profileValidator == nil || executorName == "mock" || executorName == "tether" {
+		return nil
+	}
+	if launchProfile != "" {
+		if err := s.profileValidator(launchProfile, ""); err != nil {
+			return &ValidationError{Field: "launch_profile", Message: err.Error()}
+		}
+	}
+	if agentProfile != "" {
+		if err := s.profileValidator("", agentProfile); err != nil {
+			return &ValidationError{Field: "agent_profile", Message: err.Error()}
+		}
+	}
+	return nil
 }
 
 // SetRegisteredExecutors installs where Create and Update look up the
@@ -190,7 +222,9 @@ func (s *TaskService) validateExecutor(executor string) error {
 		return nil
 	}
 	names := s.registeredExecutors()
-	if len(names) == 0 || slices.Contains(names, executor) {
+	// "tether" is a built-in (bootstrap registers it in every process), so it
+	// is accepted even from a process whose registry was built without it.
+	if len(names) == 0 || executor == "tether" || slices.Contains(names, executor) {
 		return nil
 	}
 	return &ValidationError{
@@ -232,6 +266,9 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	if input.Title == "" {
 		return nil, &ValidationError{Field: "title", Message: "title is required"}
 	}
+	// Precedence task > template > project > global: the template already
+	// filled input, so the project fills only what is still unset.
+	s.applyProjectDefaults(&input)
 
 	priority := input.Priority
 	if priority == 0 {
@@ -355,6 +392,9 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		return nil, err
 	}
 	if err := s.validateExecutor(input.Executor); err != nil {
+		return nil, err
+	}
+	if err := s.validateProfiles(input.Executor, input.LaunchProfile, input.AgentProfile); err != nil {
 		return nil, err
 	}
 	if err := validateRequiredWorkflowMetadata(input.Metadata); err != nil {
@@ -741,6 +781,20 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 	// is no longer registered can still have its other fields edited.
 	if input.Executor != nil {
 		if err := s.validateExecutor(*input.Executor); err != nil {
+			return err
+		}
+	}
+	if input.LaunchProfile != nil || input.AgentProfile != nil {
+		// Only a changed value is checked: a stored profile that has since
+		// left the registry must not block unrelated edits.
+		var lp, ap string
+		if input.LaunchProfile != nil && *input.LaunchProfile != existing.LaunchProfile {
+			lp = *input.LaunchProfile
+		}
+		if input.AgentProfile != nil && *input.AgentProfile != existing.AgentProfile {
+			ap = *input.AgentProfile
+		}
+		if err := s.validateProfiles(effectiveExecutor, lp, ap); err != nil {
 			return err
 		}
 	}

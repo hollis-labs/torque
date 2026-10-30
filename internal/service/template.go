@@ -139,6 +139,9 @@ func (s *TemplateService) Create(in TemplateCreateInput) (*sqlstore.TemplateReco
 	if err := validateQualityGates(in.QualityGates); err != nil {
 		return nil, err
 	}
+	if err := s.tasks.validateProfiles(in.Executor, in.LaunchProfile, in.AgentProfile); err != nil {
+		return nil, err
+	}
 	next, err := s.store.NextTemplateVersion(in.ID)
 	if err != nil {
 		return nil, err
@@ -172,6 +175,18 @@ func (s *TemplateService) Update(id string, in TemplateUpdateInput) (*sqlstore.T
 	}
 	if err := validateQualityGates(in.QualityGates); err != nil {
 		return nil, err
+	}
+	{
+		var lp, ap string
+		if in.LaunchProfile != nil && *in.LaunchProfile != prev.LaunchProfile.String {
+			lp = *in.LaunchProfile
+		}
+		if in.AgentProfile != nil && *in.AgentProfile != prev.AgentProfile.String {
+			ap = *in.AgentProfile
+		}
+		if err := s.tasks.validateProfiles(ptrOrDefault(in.Executor, prev.Executor.String), lp, ap); err != nil {
+			return nil, err
+		}
 	}
 	merged := mergeTemplateUpdate(prev, in)
 	merged.Version, err = s.store.NextTemplateVersion(id)
@@ -354,7 +369,7 @@ func (s *TemplateService) applyTemplateToInput(tpl *sqlstore.TemplateRecord, in 
 		Kind:                 tpl.Kind,
 		CheckpointMode:       tpl.CheckpointMode,
 		OnCheckpointResponse: tpl.OnCheckpointResponse,
-		OnDone:               tpl.OnDone,
+		OnDone:               templateOnDone(tpl.OnDone),
 		OnFail:               tpl.OnFail,
 		OnReview:             tpl.OnReview,
 		OnDoneMerge:          tpl.OnDoneMerge,
@@ -454,8 +469,10 @@ func (s *TemplateService) applyTemplateToInput(tpl *sqlstore.TemplateRecord, in 
 		v := tpl.TokenBudget.Int64
 		input.TokenBudget = &v
 	}
-	v := tpl.MaxRetries
-	input.MaxRetries = &v
+	if tpl.MaxRetries != globalMaxRetries {
+		v := tpl.MaxRetries
+		input.MaxRetries = &v
+	}
 
 	// metadata_template — deep-resolve string leaves into Metadata.
 	if tpl.MetadataTemplate.Valid && tpl.MetadataTemplate.String != "" {
@@ -712,4 +729,13 @@ func unmarshalStringArray(ns sql.NullString) []string {
 		return nil
 	}
 	return out
+}
+
+// templateOnDone returns the template's on_done, or "" when it is the stored
+// global default, so a project default can apply (see ProjectExecutionDefaults).
+func templateOnDone(v string) string {
+	if v == globalOnDone {
+		return ""
+	}
+	return v
 }

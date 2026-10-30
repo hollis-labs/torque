@@ -17,6 +17,7 @@ Start with:
 - [architecture/sqlite-concurrency-pattern.md](architecture/sqlite-concurrency-pattern.md) — the production SQLite concurrency pattern and reuse guidance
 - [hitl-workflows.md](hitl-workflows.md) — typed human-in-the-loop checkpoint workflow contracts
 - [review-routing.md](review-routing.md) — per-task review routing metadata and the `effective_review` read contract
+- [auto-run-tasks.md](auto-run-tasks.md) — the minimum to define an auto-run task, the promotion call, and execution-default precedence
 - [agent-execution-environment.md](agent-execution-environment.md) — the boot dir, planted task bundle, per-run worktree, and permission-mode contract for orchestrated agent runs
 - [aar-system.md](aar-system.md) — After-Action Report schema, submission protocol, and `torque aar` query CLI
 - [plan-branch-strategies.md](plan-branch-strategies.md) — branch/PR strategies for `kind=plan` programs, and the mandatory terminal reconcile-and-build step for option-4 (shared-branch) plans

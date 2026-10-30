@@ -331,10 +331,15 @@ func TestResolveProfile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "cli", p.Executor)
 
-	// Empty registry, no default → error names the empty registry.
-	_, err = config.ResolveProfile(config.ProfileMap{}, "")
+	// Empty registry, no default → the builtin default, never a zero profile.
+	p, err = config.ResolveProfile(config.ProfileMap{}, "")
+	require.NoError(t, err)
+	assert.NotEmpty(t, p.Provider)
+
+	// An unknown name still fails loudly, naming the profile.
+	_, err = config.ResolveProfile(config.ProfileMap{}, "nope")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "empty")
+	assert.Contains(t, err.Error(), `"nope"`)
 }
 
 // CW-20260503-0019 (S2.3) — substrate builtins fill in for internal-

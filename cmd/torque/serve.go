@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/torque/internal/launchprofile"
 	"log"
 	"log/slog"
 	"net"
@@ -213,6 +214,10 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	}
 	// Task writes name only an executor this registry has (CW-20260910-0087).
 	svc.Task.SetRegisteredExecutors(registry.List)
+	// Task and template writes name only a profile that resolves (CW-20261030-0207).
+	svc.Task.SetProfileValidator(func(launch, agent string) error {
+		return launchprofile.ValidateSelectors(profiles, launch, agent)
+	})
 	telemetryWriter, err := writequeue.New(store, telemetryDB, writequeue.DefaultConfig())
 	if err != nil {
 		return fmt.Errorf("create telemetry queue writer: %w", err)
@@ -241,6 +246,7 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// TORQUE_TETHER_URL is set; Tether has not shipped them yet (CW-20261011-0015).
 	if tc := tetherclient.New(os.Getenv("TORQUE_TETHER_URL"), os.Getenv("TORQUE_TETHER_TOKEN")); tc != nil {
 		svc.Workstream.SetTether(tc)
+		sched.SetSessionStopper(tc.StopSession)
 		log.Printf("[serve] workstream claims consult Tether at %s", tc.BaseURL)
 	}
 	stateWriter := writeq.New(store, writeq.Options{})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/torque/internal/launchprofile"
 	"io"
 	"log/slog"
 	"net/http"
@@ -186,6 +187,9 @@ new torque mcp process.`,
 			// (CW-20260910-0087). The registry is built only to read its
 			// names; if that fails the check stays off rather than
 			// refusing every executor.
+			svc.Task.SetProfileValidator(func(launch, agent string) error {
+				return launchprofile.ValidateSelectors(profiles, launch, agent)
+			})
 			executors := bootstrap.NewExecutorRegistry()
 			if err := bootstrap.Executors(executors, agentDeps); err != nil {
 				fmt.Fprintf(os.Stderr, "torque mcp: executor registry unavailable, task executors are not validated: %v\n", err)
