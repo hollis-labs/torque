@@ -87,11 +87,14 @@ func (e *Executor) Validate(job *executor.ExecutionJob) error {
 	// Resolve via the same launchprofile.Resolve seam Boot uses so a job
 	// carrying only launch_profile validates the resolved underlying
 	// agent_profile, not the empty legacy field.
-	resolved := launchprofile.Resolve(launchprofile.ResolveRequest{
+	resolved, rerr := launchprofile.ResolveStrict(launchprofile.ResolveRequest{
 		LaunchProfile:      job.LaunchProfile,
 		LegacyAgentProfile: job.AgentProfile,
 		Source:             e.deps.Profiles,
 	})
+	if rerr != nil {
+		return executor.NewPermanentError(rerr)
+	}
 	profile := resolved.AgentProfile
 	// Resolve the kind via the same matrix Boot uses (profile override →
 	// per-provider default). Validate then exercises adapterFor with the
@@ -155,11 +158,14 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 	mode := modeForJob(job)
 	opts := optsFromJob(job, resolvedWD)
 	opts.Mode = mode
-	resolved := launchprofile.Resolve(launchprofile.ResolveRequest{
+	resolved, rerr := launchprofile.ResolveStrict(launchprofile.ResolveRequest{
 		LaunchProfile:      job.LaunchProfile,
 		LegacyAgentProfile: job.AgentProfile,
 		Source:             e.deps.Profiles,
 	})
+	if rerr != nil {
+		return &executor.ExecutionResult{Status: "blocked", Reason: rerr.Error()}, executor.NewPermanentError(rerr)
+	}
 	profile := resolved.AgentProfile
 
 	switch mode {

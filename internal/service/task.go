@@ -169,6 +169,37 @@ type TaskService struct {
 	registeredExecutors func() []string
 	// sourceControl reads PR state for the landing gate; see SetSourceControl.
 	sourceControl landing.SourceControl
+	// profileValidator checks a launch_profile / agent_profile pair against
+	// the profile registry; nil disables the check. See SetProfileValidator.
+	profileValidator func(launchProfile, agentProfile string) error
+}
+
+// SetProfileValidator installs the check Create, Update and template writes
+// use to reject a launch_profile or agent_profile that does not resolve
+// (CW-20261030-0207). Empty values mean the default profile and always pass.
+// nil (the default) disables the check. Install once at bootstrap.
+func (s *TaskService) SetProfileValidator(v func(launchProfile, agentProfile string) error) {
+	s.profileValidator = v
+}
+
+// validateProfiles checks each supplied selector on its own, so a typo in
+// agent_profile is caught even when launch_profile is valid.
+func (s *TaskService) validateProfiles(executorName, launchProfile, agentProfile string) error {
+	// The mock executor never reads a profile.
+	if s == nil || s.profileValidator == nil || executorName == "mock" {
+		return nil
+	}
+	if launchProfile != "" {
+		if err := s.profileValidator(launchProfile, ""); err != nil {
+			return &ValidationError{Field: "launch_profile", Message: err.Error()}
+		}
+	}
+	if agentProfile != "" {
+		if err := s.profileValidator("", agentProfile); err != nil {
+			return &ValidationError{Field: "agent_profile", Message: err.Error()}
+		}
+	}
+	return nil
 }
 
 // SetRegisteredExecutors installs where Create and Update look up the
@@ -355,6 +386,9 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 		return nil, err
 	}
 	if err := s.validateExecutor(input.Executor); err != nil {
+		return nil, err
+	}
+	if err := s.validateProfiles(input.Executor, input.LaunchProfile, input.AgentProfile); err != nil {
 		return nil, err
 	}
 	if err := validateRequiredWorkflowMetadata(input.Metadata); err != nil {
@@ -741,6 +775,18 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 	// is no longer registered can still have its other fields edited.
 	if input.Executor != nil {
 		if err := s.validateExecutor(*input.Executor); err != nil {
+			return err
+		}
+	}
+	if input.LaunchProfile != nil || input.AgentProfile != nil {
+		var lp, ap string
+		if input.LaunchProfile != nil {
+			lp = *input.LaunchProfile
+		}
+		if input.AgentProfile != nil {
+			ap = *input.AgentProfile
+		}
+		if err := s.validateProfiles(effectiveExecutor, lp, ap); err != nil {
 			return err
 		}
 	}

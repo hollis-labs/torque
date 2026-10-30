@@ -139,6 +139,9 @@ func (s *TemplateService) Create(in TemplateCreateInput) (*sqlstore.TemplateReco
 	if err := validateQualityGates(in.QualityGates); err != nil {
 		return nil, err
 	}
+	if err := s.tasks.validateProfiles(in.Executor, in.LaunchProfile, in.AgentProfile); err != nil {
+		return nil, err
+	}
 	next, err := s.store.NextTemplateVersion(in.ID)
 	if err != nil {
 		return nil, err
@@ -172,6 +175,18 @@ func (s *TemplateService) Update(id string, in TemplateUpdateInput) (*sqlstore.T
 	}
 	if err := validateQualityGates(in.QualityGates); err != nil {
 		return nil, err
+	}
+	{
+		var lp, ap string
+		if in.LaunchProfile != nil {
+			lp = *in.LaunchProfile
+		}
+		if in.AgentProfile != nil {
+			ap = *in.AgentProfile
+		}
+		if err := s.tasks.validateProfiles(ptrOrDefault(in.Executor, prev.Executor.String), lp, ap); err != nil {
+			return nil, err
+		}
 	}
 	merged := mergeTemplateUpdate(prev, in)
 	merged.Version, err = s.store.NextTemplateVersion(id)

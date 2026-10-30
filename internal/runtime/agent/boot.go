@@ -75,11 +75,14 @@ func Boot(ctx context.Context, deps *Dependencies, opts Options) (sess *Session,
 	// front. LaunchProfile is the first-class user-facing selector; when
 	// empty, AgentProfile flows through the legacy-compat path inside the
 	// resolver (which may map to a builtin family or pass through verbatim).
-	resolved := launchprofile.Resolve(launchprofile.ResolveRequest{
+	resolved, err := launchprofile.ResolveStrict(launchprofile.ResolveRequest{
 		LaunchProfile:      opts.LaunchProfile,
 		LegacyAgentProfile: opts.AgentProfile,
 		Source:             deps.Profiles,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrAdapterNotFound, err)
+	}
 	profile := resolved.AgentProfile
 	agentProfileName := resolved.AgentProfileName
 
