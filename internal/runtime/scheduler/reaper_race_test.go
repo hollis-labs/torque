@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -242,4 +243,35 @@ func TestRecoverStuckTask_ATaskLeftInDoingIsRequeuedOnTheNextScan(t *testing.T) 
 			assert.Equal(t, "done", run.Status, "and the run that finished is still left as it finished")
 		})
 	}
+}
+
+func TestRecoverOrphanedWorker_StopsTetherSession(t *testing.T) {
+	sched, store := setupRecoverySchedulerWithGrace(t, 1)
+	taskID := "CW-REAP-TETHER"
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: taskID, Title: "t", Status: "doing", Executor: "tether"}))
+	runID, err := store.CreateRun(&sqlstore.RunRecord{TaskID: taskID, Executor: "tether", Status: "running"})
+	require.NoError(t, err)
+	_, err = store.DB().Exec(`UPDATE runs SET tether_session_id = 'sess-live' WHERE id = ?`, runID)
+	require.NoError(t, err)
+	workerID := "w-" + taskID
+	_, err = store.DB().Exec(
+		`INSERT INTO worker_heartbeats (worker_id, task_id, run_id, executor, started_at, last_heartbeat)
+		 VALUES (?, ?, ?, 'tether', datetime('now', '-2 minutes'), datetime('now', '-2 minutes'))`,
+		workerID, taskID, runID)
+	require.NoError(t, err)
+
+	var stopped []string
+	sched.SetSessionStopper(func(_ context.Context, id string) error {
+		stopped = append(stopped, id)
+		return errors.New("tether down") // best effort: recovery still completes
+	})
+	sched.recoverOrphanedWorker(context.Background(), StaleWorker{WorkerID: workerID, TaskID: taskID, RunID: runID, Executor: "tether"})
+
+	require.Equal(t, []string{"sess-live"}, stopped)
+	task, err := store.GetTask(taskID)
+	require.NoError(t, err)
+	assert.Equal(t, "todo", task.Status)
+	run, err := store.GetRun(runID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", run.Status)
 }

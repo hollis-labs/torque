@@ -112,3 +112,14 @@ func TestProjectExecutionDefaults_Validation(t *testing.T) {
 	require.NoError(t, err)
 	assert.JSONEq(t, good.String, got.ExecutionDefaults.String)
 }
+
+func TestProjectExecutionDefaults_TetherSkipsProfileValidation(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("projects")
+	svc.Task.SetProfileValidator(profileCheck("implementer"))
+	_, err := svc.Project.Create(service.ProjectCreateInput{
+		Name: "TP", RepoPath: t.TempDir(),
+		ExecutionDefaults: `{"executor":"tether","launch_profile":"general-worker"}`,
+	})
+	require.NoError(t, err)
+}

@@ -178,10 +178,10 @@ func (s *TemplateService) Update(id string, in TemplateUpdateInput) (*sqlstore.T
 	}
 	{
 		var lp, ap string
-		if in.LaunchProfile != nil {
+		if in.LaunchProfile != nil && *in.LaunchProfile != prev.LaunchProfile.String {
 			lp = *in.LaunchProfile
 		}
-		if in.AgentProfile != nil {
+		if in.AgentProfile != nil && *in.AgentProfile != prev.AgentProfile.String {
 			ap = *in.AgentProfile
 		}
 		if err := s.tasks.validateProfiles(ptrOrDefault(in.Executor, prev.Executor.String), lp, ap); err != nil {

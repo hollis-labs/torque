@@ -185,8 +185,9 @@ func (s *TaskService) SetProfileValidator(v func(launchProfile, agentProfile str
 // validateProfiles checks each supplied selector on its own, so a typo in
 // agent_profile is caught even when launch_profile is valid.
 func (s *TaskService) validateProfiles(executorName, launchProfile, agentProfile string) error {
-	// The mock executor never reads a profile.
-	if s == nil || s.profileValidator == nil || executorName == "mock" {
+	// The mock executor never reads a profile, and a tether task's
+	// launch_profile is a Tether launch id the profile registry does not know.
+	if s == nil || s.profileValidator == nil || executorName == "mock" || executorName == "tether" {
 		return nil
 	}
 	if launchProfile != "" {
@@ -784,11 +785,13 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 		}
 	}
 	if input.LaunchProfile != nil || input.AgentProfile != nil {
+		// Only a changed value is checked: a stored profile that has since
+		// left the registry must not block unrelated edits.
 		var lp, ap string
-		if input.LaunchProfile != nil {
+		if input.LaunchProfile != nil && *input.LaunchProfile != existing.LaunchProfile {
 			lp = *input.LaunchProfile
 		}
-		if input.AgentProfile != nil {
+		if input.AgentProfile != nil && *input.AgentProfile != existing.AgentProfile {
 			ap = *input.AgentProfile
 		}
 		if err := s.validateProfiles(effectiveExecutor, lp, ap); err != nil {

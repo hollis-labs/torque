@@ -61,6 +61,7 @@ type SchedulerStatus struct {
 // dispatches them to executors via a worker pool, and handles results
 // through the lifecycle manager.
 type Scheduler struct {
+	sessionStopper func(ctx context.Context, tetherSessionID string) error // optional; see SetSessionStopper
 	// unresolvedProfiles remembers, for unresolvedProfileTTL, the task
 	// profiles that resolved to no provider (TaskProfile -> expiry), so cost
 	// resolution does not re-log config's "profile not found" warning on every
@@ -221,6 +222,12 @@ func New(
 	})
 
 	return s
+}
+
+// SetSessionStopper installs the best-effort hook orphan recovery uses to
+// stop the external (Tether) session a dead run had launched. nil disables it.
+func (s *Scheduler) SetSessionStopper(f func(ctx context.Context, tetherSessionID string) error) {
+	s.sessionStopper = f
 }
 
 // SetLandingEvaluator installs the typed landing check the lifecycle runs
@@ -959,6 +966,13 @@ func (s *Scheduler) recoverOrphanedWorker(ctx context.Context, w StaleWorker) {
 		if run, rerr := s.store.GetRun(w.RunID); rerr != nil {
 			log.Printf("[scheduler] orphan recovery: get run %d: %v", w.RunID, rerr)
 		} else if run.Status == "running" {
+			if sid := run.TetherSessionID.String; sid != "" && s.sessionStopper != nil {
+				if serr := s.sessionStopper(ctx, sid); serr != nil {
+					log.Printf("[scheduler] orphan recovery: stop tether session %s (run %d): %v", sid, w.RunID, serr)
+				} else {
+					log.Printf("[scheduler] orphan recovery: stopped tether session %s (run %d)", sid, w.RunID)
+				}
+			}
 			reclaimed, werr := s.reclaimRun(ctx, "scheduler_orphan_recovery", w.RunID, w.TaskID,
 				"orphaned: worker process gone, auto-recovered by scheduler",
 				`{"reason":"worker_process_gone"}`)

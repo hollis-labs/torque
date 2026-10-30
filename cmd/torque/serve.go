@@ -246,6 +246,7 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	// TORQUE_TETHER_URL is set; Tether has not shipped them yet (CW-20261011-0015).
 	if tc := tetherclient.New(os.Getenv("TORQUE_TETHER_URL"), os.Getenv("TORQUE_TETHER_TOKEN")); tc != nil {
 		svc.Workstream.SetTether(tc)
+		sched.SetSessionStopper(tc.StopSession)
 		log.Printf("[serve] workstream claims consult Tether at %s", tc.BaseURL)
 	}
 	stateWriter := writeq.New(store, writeq.Options{})

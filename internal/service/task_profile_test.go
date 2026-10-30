@@ -85,3 +85,37 @@ func TestTemplate_RejectsAndInstantiateRejectsUnknownProfile(t *testing.T) {
 	})
 	require.Error(t, err)
 }
+
+// A tether task's launch_profile is a Tether launch id, not a registry profile.
+func TestTetherExecutor_SkipsProfileValidation(t *testing.T) {
+	svc := setupService(t)
+	svc.Task.SetProfileValidator(profileCheck("implementer"))
+
+	rec, err := svc.Task.Create(service.TaskCreateInput{Title: "t", Executor: "tether", LaunchProfile: "general-worker"})
+	require.NoError(t, err)
+	require.NoError(t, svc.Task.Update(rec.ID, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{LaunchProfile: strp("other-launch")}}))
+
+	_, err = svc.Template.Create(service.TemplateCreateInput{ID: "tt", Name: "tt", Executor: "tether", LaunchProfile: "general-worker"})
+	require.NoError(t, err)
+	_, err = svc.Template.Update("tt", service.TemplateUpdateInput{LaunchProfile: strp("another-launch")})
+	require.NoError(t, err)
+}
+
+// Only a changed profile is validated on update, so a stored profile that has
+// left the registry does not block unrelated edits.
+func TestUpdate_ValidatesProfileOnlyWhenChanged(t *testing.T) {
+	svc := setupService(t)
+	rec, err := svc.Task.Create(service.TaskCreateInput{Title: "t", AgentProfile: "gone"})
+	require.NoError(t, err)
+	_, err = svc.Template.Create(service.TemplateCreateInput{ID: "tpl", Name: "tpl", AgentProfile: "gone"})
+	require.NoError(t, err)
+	svc.Task.SetProfileValidator(profileCheck("implementer"))
+
+	require.NoError(t, svc.Task.Update(rec.ID, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{AgentProfile: strp("gone")}}))
+	require.Error(t, svc.Task.Update(rec.ID, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{AgentProfile: strp("typo")}}))
+
+	_, err = svc.Template.Update("tpl", service.TemplateUpdateInput{AgentProfile: strp("gone")})
+	require.NoError(t, err)
+	_, err = svc.Template.Update("tpl", service.TemplateUpdateInput{AgentProfile: strp("typo")})
+	require.Error(t, err)
+}

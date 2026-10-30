@@ -30,6 +30,8 @@ type fakeTether struct {
 	launches    int
 	stops       int
 	exitOnStop  bool // stop moves the session to killed
+	dropCreates int  // remaining creates answered by dropping the connection
+	createCalls int
 }
 
 type fakeSession struct {
@@ -80,6 +82,16 @@ func (f *fakeTether) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/sessions":
 		var req tetherclient.CreateRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		f.createCalls++
+		if f.dropCreates > 0 {
+			f.dropCreates--
+			if hj, ok := w.(http.Hijacker); ok {
+				if c, _, err := hj.Hijack(); err == nil {
+					_ = c.Close()
+				}
+			}
+			return
+		}
 		if req.Launch == "nope" {
 			writeErr(w, 404, "not_found", "unknown launch")
 			return
@@ -163,6 +175,7 @@ func setup(t *testing.T, cfg Config) (*Executor, *fakeTether, *recBinder) {
 	t.Cleanup(srv.Close)
 	cfg.PollInterval = 10 * time.Millisecond
 	cfg.DeferInterval = 10 * time.Millisecond
+	cfg.CreateRetryGap = 5 * time.Millisecond
 	b := &recBinder{}
 	return New(tetherclient.New(srv.URL, ""), b, cfg), f, b
 }
@@ -493,4 +506,57 @@ func TestFinalTurnBeyondFirstEventPage(t *testing.T) {
 	}
 	r := <-done
 	require.Equal(t, "done", r.Status)
+}
+
+func TestCreateRetriesTransportErrorWithSameKey(t *testing.T) {
+	ex, f, _ := setup(t, Config{})
+	f.dropCreates = 2
+	done := make(chan *executor.ExecutionResult, 1)
+	go func() {
+		r, err := ex.Run(context.Background(), job(), nil)
+		require.NoError(t, err)
+		done <- r
+	}()
+	s := waitSession(t, f)
+	finalEvent(f, s.id)
+	require.Equal(t, "done", (<-done).Status)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	require.Equal(t, 3, f.createCalls)
+	require.Len(t, f.creates, 1, "one session despite the retries")
+}
+
+func TestCreateGivesUpAfterBoundedRetries(t *testing.T) {
+	ex, f, _ := setup(t, Config{})
+	f.dropCreates = 1000
+	r, err := ex.Run(context.Background(), job(), nil)
+	require.Error(t, err)
+	require.Nil(t, r)
+	require.False(t, executor.IsPermanent(err), "transport trouble stays retryable by the scheduler")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	require.Equal(t, createAttempts, f.createCalls)
+}
+
+func TestLaunchConflictOtherThanCapacityDefers(t *testing.T) {
+	ex, f, _ := setup(t, Config{})
+	f.refuseLaunc, f.refuseCode = 2, "state_conflict"
+	done := make(chan *executor.ExecutionResult, 1)
+	go func() {
+		r, err := ex.Run(context.Background(), job(), nil)
+		require.NoError(t, err)
+		done <- r
+	}()
+	s := waitSession(t, f)
+	require.Eventually(t, func() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.launches == 1 }, 2*time.Second, 5*time.Millisecond)
+	finalEvent(f, s.id)
+	require.Equal(t, "done", (<-done).Status)
+}
+
+func TestLaunchIdempotencyConflictFails(t *testing.T) {
+	ex, f, _ := setup(t, Config{})
+	f.refuseLaunc, f.refuseCode = 1, "idempotency_conflict"
+	r, err := ex.Run(context.Background(), job(), nil)
+	require.NoError(t, err)
+	require.Equal(t, "failed", r.Status)
 }

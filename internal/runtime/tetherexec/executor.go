@@ -56,6 +56,7 @@ type Config struct {
 	DeferInterval  time.Duration // retry gap after a capacity refusal; default 15s
 	DeferMax       time.Duration // stop deferring (task blocked, not failed); default 30m
 	DefaultTimeout time.Duration // run ceiling after launch; default 2h
+	CreateRetryGap time.Duration // pause between in-process CreateSession retries; default 2s
 	StopGrace      time.Duration // wait past stop_after_final_turn before Torque stops the session; default 30s
 	// StopAfterFinalTurn is a default opt-in reaper grace sent in the create
 	// override (e.g. "30s"); empty leaves it to the Tether launch profile or
@@ -63,7 +64,13 @@ type Config struct {
 	StopAfterFinalTurn string
 }
 
+// createAttempts bounds in-process CreateSession tries on transport errors.
+const createAttempts = 3
+
 func (c *Config) defaults() {
+	if c.CreateRetryGap <= 0 {
+		c.CreateRetryGap = 2 * time.Second
+	}
 	if c.PollInterval <= 0 {
 		c.PollInterval = 3 * time.Second
 	}
@@ -132,6 +139,12 @@ func IdempotencyKey(taskID string, runID int64) string {
 	return fmt.Sprintf("torque/%s/run-%d", taskID, runID)
 }
 
+// isLaunchConflict reports a 409 that is not an idempotency_conflict.
+func isLaunchConflict(err error) bool {
+	var ae *tetherclient.APIError
+	return errors.As(err, &ae) && ae.Status == 409 && ae.Code != tetherclient.CodeIdempotencyConflict
+}
+
 func isClientError(err error) bool {
 	var ae *tetherclient.APIError
 	return errors.As(err, &ae) && ae.Status >= 400 && ae.Status < 500
@@ -183,7 +196,20 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 		req.Override = `{"lifecycle":{"stop_after_final_turn":` + strconv.Quote(reaper) + `}}`
 	}
 
-	created, err := e.sessions.CreateSession(ctx, req)
+	var created *tetherclient.Session
+	var err error
+	for attempt := 1; ; attempt++ {
+		created, err = e.sessions.CreateSession(ctx, req)
+		// The idempotency key makes a retry safe: if the first request landed
+		// despite the transport error, the retry returns that session.
+		if err == nil || ctx.Err() != nil || isClientError(err) || attempt >= createAttempts {
+			break
+		}
+		emit("create session attempt %d failed: %v; retrying", attempt, err)
+		if !sleep(ctx, e.cfg.CreateRetryGap) {
+			return nil, ctx.Err()
+		}
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -219,10 +245,15 @@ func (e *Executor) Run(ctx context.Context, job *executor.ExecutionJob, cb execu
 			return nil, ctx.Err()
 		}
 		if !tetherclient.IsCapacityRefusal(err) {
-			if isClientError(err) {
+			if isLaunchConflict(err) {
+				// A 409 other than a key conflict (a state race, a transient
+				// policy refusal) leaves the session `created`: defer like a
+				// capacity refusal rather than fail the task.
+			} else if isClientError(err) {
 				return result("failed", "tether launch: "+err.Error()), nil
+			} else {
+				return nil, fmt.Errorf("tether launch: %w", err)
 			}
-			return nil, fmt.Errorf("tether launch: %w", err)
 		}
 		if time.Now().After(deferDeadline) {
 			return result("blocked", fmt.Sprintf("tether capacity: launch deferred %s without admission (%v)", e.cfg.DeferMax, err)), nil
