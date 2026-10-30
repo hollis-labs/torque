@@ -128,6 +128,8 @@ func (f *fakeTether) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			evs = append(evs, s.events[i])
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"events": evs})
+	case r.Method == http.MethodGet && len(parts) == 3 && parts[2] == "wait":
+		_ = json.NewEncoder(w).Encode(map[string]any{"exit_code": 0, "output_kind": "final", "output_text": "from wait"})
 	default:
 		writeErr(w, 404, "not_found", r.URL.Path)
 	}
@@ -419,4 +421,29 @@ func TestBadReaperDurationIsPermanent(t *testing.T) {
 	j.Metadata["tether_stop_after_final_turn"] = "soon"
 	_, err := ex.Run(context.Background(), j, nil)
 	require.True(t, executor.IsPermanent(err))
+}
+
+func TestRoutedFinal_TextRecoveredFromWaitOnceSessionEnds(t *testing.T) {
+	ex, f, _ := setup(t, Config{StopAfterFinalTurn: "30s", StopGrace: time.Minute})
+	done := make(chan *executor.ExecutionResult, 1)
+	go func() { r, _ := ex.Run(context.Background(), job(), nil); done <- r }()
+	s := waitSession(t, f)
+	// A routed final carries a message_id and no text.
+	f.emit(s.id, "session.turn_output", map[string]any{"turn_id": "t1", "kind": "final", "message_id": "m1"})
+	time.Sleep(40 * time.Millisecond)
+	f.setState(s.id, "killed", 0)
+	r := <-done
+	require.Equal(t, "done", r.Status)
+	require.Contains(t, r.Reason, "from wait")
+}
+
+func TestQuestionTurnIsNotCompletion(t *testing.T) {
+	ex, f, _ := setup(t, Config{DefaultTimeout: 150 * time.Millisecond})
+	done := make(chan *executor.ExecutionResult, 1)
+	go func() { r, _ := ex.Run(context.Background(), job(), nil); done <- r }()
+	s := waitSession(t, f)
+	f.emit(s.id, "session.turn_output", map[string]any{"turn_id": "t1", "kind": "question", "text": "which db?"})
+	r := <-done
+	require.Equal(t, "failed", r.Status, "an unanswered question runs to the timeout, it is not success")
+	require.Contains(t, r.Reason, "timed out")
 }

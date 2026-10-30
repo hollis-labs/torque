@@ -40,6 +40,7 @@ type Sessions interface {
 	GetSession(ctx context.Context, id string) (*tetherclient.SessionState, error)
 	StopSession(ctx context.Context, id string) error
 	SessionEvents(ctx context.Context, id string, limit int, cursor int64) ([]tetherclient.Event, error)
+	WaitSession(ctx context.Context, id string) (*tetherclient.WaitResult, error)
 }
 
 // RunBinder records which Tether session a Torque run launched.
@@ -319,6 +320,7 @@ func (e *Executor) watch(runCtx, parent context.Context, sid string, reapDur tim
 		}
 
 		if serr == nil && tetherclient.IsTerminalState(st.State) {
+			e.fillRoutedText(runCtx, sid, final)
 			return terminal(st, final), nil
 		}
 
@@ -354,6 +356,21 @@ func (e *Executor) watch(runCtx, parent context.Context, sid string, reapDur tim
 				Status: "failed", Reason: "tether run timed out before a final turn; session stopped",
 			}, sessionOver: true}, nil
 		}
+	}
+}
+
+// fillRoutedText recovers the final text for a routed session: when the launch
+// routes the final kind, the turn_output event carries only a message_id and
+// the text is staged elsewhere. The session has exited, so /wait answers at
+// once with the newest turn result.
+func (e *Executor) fillRoutedText(ctx context.Context, sid string, final *tetherclient.TurnOutput) {
+	if final == nil || final.Text != "" {
+		return
+	}
+	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if w, err := e.sessions.WaitSession(wctx, sid); err == nil && w.OutputText != "" {
+		final.Text = w.OutputText
 	}
 }
 
