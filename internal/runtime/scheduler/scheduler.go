@@ -1489,7 +1489,13 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 		// Resolve the run's cost once, provider first then a cache-aware
 		// estimate, and write the same figure to runs.cost and the run's
 		// cost_ledger row in one transaction (CW-20260912-0003).
-		comp, ledger, cost := s.costWrite(&task, result, result.Status, result.Reason)
+		// error_message records why a run went wrong; a successful run's
+		// reason is a success note and stays out of it.
+		errMsg := result.Reason
+		if result.Status == "done" {
+			errMsg = ""
+		}
+		comp, ledger, cost := s.costWrite(&task, result, result.Status, errMsg)
 		runCompletedPayload := runCompletedEventPayload(result, cost)
 		if err := s.stateWriter.Submit(context.Background(), "scheduler_run_completed", func(tx *sqlstore.WriteTx) error {
 			if _, err := tx.CompleteRunWithCost(capturedRunID, comp, ledger); err != nil {

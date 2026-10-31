@@ -382,6 +382,7 @@ func (e *Executor) watch(runCtx, parent context.Context, sid string, reapDur tim
 					note = fmt.Sprintf("stop_after_final_turn=%s did not end the session within %s; Torque stopped it", reapDur, wait)
 				}
 				emit("%s", note)
+				e.fillRoutedText(runCtx, sid, final)
 				e.stop(sid, emit)
 				return &watchResult{ExecutionResult: doneResult(final, note), sessionOver: true}, nil
 			}
@@ -394,6 +395,7 @@ func (e *Executor) watch(runCtx, parent context.Context, sid string, reapDur tim
 			// Run ceiling reached.
 			e.stop(sid, emit)
 			if final != nil {
+				e.fillRoutedText(parent, sid, final)
 				return &watchResult{ExecutionResult: doneResult(final, "run timeout after final turn; session stopped"), sessionOver: true}, nil
 			}
 			return &watchResult{ExecutionResult: &executor.ExecutionResult{
@@ -405,8 +407,8 @@ func (e *Executor) watch(runCtx, parent context.Context, sid string, reapDur tim
 
 // fillRoutedText recovers the final text for a routed session: when the launch
 // routes the final kind, the turn_output event carries only a message_id and
-// the text is staged elsewhere. The session has exited, so /wait answers at
-// once with the newest turn result.
+// the text is staged elsewhere. /wait answers at once with the newest turn
+// result once the session has exited or gone idle after its final turn.
 func (e *Executor) fillRoutedText(ctx context.Context, sid string, final *tetherclient.TurnOutput) {
 	if final == nil || final.Text != "" {
 		return
