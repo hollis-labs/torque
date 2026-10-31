@@ -459,6 +459,21 @@ func TestRoutedFinal_TextRecoveredFromWaitOnceSessionEnds(t *testing.T) {
 	require.Contains(t, r.Reason, "from wait")
 }
 
+func TestRoutedFinal_TextRecoveredOnIdleStop(t *testing.T) {
+	ex, f, _ := setup(t, Config{})
+	done := make(chan *executor.ExecutionResult, 1)
+	go func() { r, _ := ex.Run(context.Background(), job(), nil); done <- r }()
+	s := waitSession(t, f)
+	// Routed final: message_id only. The session stays alive, so Torque stops it.
+	f.emit(s.id, "session.turn_output", map[string]any{"turn_id": "t1", "kind": "final", "message_id": "m1"})
+	r := <-done
+	require.Equal(t, "done", r.Status)
+	require.Equal(t, 1, f.stops)
+	require.Contains(t, r.Reason, "from wait")
+	require.NotNil(t, r.TaskComment)
+	require.Contains(t, r.TaskComment.Content, "from wait")
+}
+
 func TestQuestionTurnIsNotCompletion(t *testing.T) {
 	ex, f, _ := setup(t, Config{DefaultTimeout: 150 * time.Millisecond})
 	done := make(chan *executor.ExecutionResult, 1)

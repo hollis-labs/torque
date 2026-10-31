@@ -245,6 +245,26 @@ func TestSchedulerStopPreservesDefinitiveReviewResult(t *testing.T) {
 	assert.Equal(t, "review", task.Status)
 }
 
+func TestSchedulerStopDoneResultLeavesErrorMessageEmpty(t *testing.T) {
+	sched, store, exec, cleanup := setupShutdownCauseScheduler(t, &executor.ExecutionResult{Status: "done", Reason: "final turn: all good"})
+	defer cleanup()
+	const taskID = "CW-SHUTDOWN-DONE"
+	require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+		ID: taskID, Title: "done race", Status: "todo", Priority: 1,
+		Executor: "cause", AgentProfile: "mock", OnDone: "review", OnFail: "retry", MaxRetries: 3,
+	}))
+	require.NoError(t, sched.Tick(context.Background()))
+	require.Eventually(t, func() bool { return exec.RunCount() == 1 }, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, sched.Stop(ctx))
+
+	run := requireSingleRun(t, store, taskID)
+	assert.Equal(t, "done", run.Status)
+	assert.Empty(t, run.ErrorMessage, "a successful run keeps its success note out of error_message")
+}
+
 func TestSchedulerPicksAndExecutesTasks(t *testing.T) {
 	sched, store, mock := setupScheduler(t)
 
