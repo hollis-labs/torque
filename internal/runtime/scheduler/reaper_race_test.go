@@ -275,3 +275,38 @@ func TestRecoverOrphanedWorker_StopsTetherSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "failed", run.Status)
 }
+
+// A restart leaves no heartbeat row, so the stuck-task and orphan-run paths
+// (not recoverOrphanedWorker) reclaim the run. Each must still stop the Tether
+// session the run launched, or it keeps running unwatched.
+func TestRecoverWithoutHeartbeat_StopsTetherSession(t *testing.T) {
+	for _, path := range []string{"stuck_task", "orphan_run"} {
+		t.Run(path, func(t *testing.T) {
+			sched, store := setupRecoverySchedulerWithGrace(t, 1)
+			taskID := "CW-REAP-TETHER-" + path
+			require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{ID: taskID, Title: "t", Status: "doing", Executor: "tether"}))
+			runID, err := store.CreateRun(&sqlstore.RunRecord{TaskID: taskID, Executor: "tether", Status: "running"})
+			require.NoError(t, err)
+			_, err = store.DB().Exec(`UPDATE runs SET tether_session_id = 'sess-restart' WHERE id = ?`, runID)
+			require.NoError(t, err)
+
+			var stopped []string
+			sched.SetSessionStopper(func(_ context.Context, id string) error {
+				stopped = append(stopped, id)
+				return nil
+			})
+			if path == "stuck_task" {
+				sched.recoverStuckTask(context.Background(), healthscan.ModeBoot, healthscan.Anomaly{
+					Kind: healthscan.AnomalyTaskDoingNoWorker, TaskID: taskID, ObservedAt: time.Now().Add(-10 * time.Second)})
+			} else {
+				sched.recoverOrphanRun(context.Background(), healthscan.ModeBoot, healthscan.Anomaly{
+					Kind: healthscan.AnomalyRunRunningNoWorker, TaskID: taskID, RunID: runID, ObservedAt: time.Now().Add(-10 * time.Second)})
+			}
+
+			require.Equal(t, []string{"sess-restart"}, stopped)
+			run, err := store.GetRun(runID)
+			require.NoError(t, err)
+			require.Equal(t, "failed", run.Status)
+		})
+	}
+}

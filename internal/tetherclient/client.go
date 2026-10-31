@@ -117,20 +117,22 @@ func (c *Client) get(ctx context.Context, path string, out any) (int, error) {
 	return resp.StatusCode, nil
 }
 
-// Capacity reads GET /capacity for an environment.
-func (c *Client) Capacity(ctx context.Context, environmentID string) (*Capacity, error) {
+// Capacity reads GET /capacity. Tether answers for its own environment and
+// ignores any environment_id query parameter, so none is sent; the returned
+// EnvironmentID is informational.
+func (c *Client) Capacity(ctx context.Context) (*Capacity, error) {
 	var out Capacity
-	path := "/capacity"
-	if environmentID != "" {
-		path += "?environment_id=" + url.QueryEscape(environmentID)
-	}
-	if _, err := c.get(ctx, path, &out); err != nil {
+	if _, err := c.get(ctx, "/capacity", &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
 // Run reads GET /teams/runs/{run_id}. A 404 is ErrRunNotFound.
+//
+// UNVERIFIED: Tether origin/main has no matching route, so a 404 may mean the
+// endpoint does not exist rather than that the run is gone. Callers must not
+// treat ErrRunNotFound as proof of death.
 func (c *Client) Run(ctx context.Context, runID string) (*RunState, error) {
 	var out RunState
 	code, err := c.get(ctx, "/teams/runs/"+url.PathEscape(runID), &out)
