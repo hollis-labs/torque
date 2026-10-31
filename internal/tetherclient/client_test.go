@@ -19,8 +19,8 @@ func TestCapacityAndRun(t *testing.T) {
 		require.Equal(t, "Bearer tok", r.Header.Get("Authorization"))
 		switch r.URL.Path {
 		case "/capacity":
-			require.Equal(t, "agent-os", r.URL.Query().Get("environment_id"))
-			w.Write([]byte(`{"environment_id":"agent-os","max_sessions":4,"active_sessions":4,"admission":"open"}`))
+			require.Empty(t, r.URL.RawQuery, "Tether ignores environment_id, so none is sent")
+			w.Write([]byte(`{"environment_id":"local","max_sessions":4,"active_sessions":4,"admission":"open"}`))
 		case "/teams/runs/run-1":
 			w.Write([]byte(`{"status":"running"}`))
 		case "/teams/runs/run-2":
@@ -35,8 +35,9 @@ func TestCapacityAndRun(t *testing.T) {
 	c := New(srv.URL+"/", "tok")
 	ctx := context.Background()
 
-	cap, err := c.Capacity(ctx, "agent-os")
+	cap, err := c.Capacity(ctx)
 	require.NoError(t, err)
+	require.Equal(t, "local", cap.EnvironmentID)
 	require.Equal(t, 4, cap.MaxSessions)
 	require.Equal(t, "open", cap.Admission)
 

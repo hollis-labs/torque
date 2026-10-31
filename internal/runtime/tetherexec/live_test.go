@@ -29,7 +29,7 @@ func TestLiveScratchLaunch(t *testing.T) {
 	require.NotEmpty(t, launch)
 	c := tetherclient.New(url, os.Getenv("TORQUE_TETHER_LIVE_TOKEN"))
 
-	cap, err := c.Capacity(context.Background(), "")
+	cap, err := c.Capacity(context.Background())
 	require.NoError(t, err)
 	t.Logf("capacity: %+v", cap)
 
