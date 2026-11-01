@@ -67,11 +67,24 @@ type Picker struct {
 	// scheduler construction; read once and never mutated — no config
 	// reload mechanism exists for this stopgap.
 	projectAllowlist map[string]struct{}
+
+	// maxPerProject caps concurrent doing tasks per project. Always >= 1.
+	maxPerProject int
 }
 
 // NewPicker creates a new task picker.
 func NewPicker(store *sqlstore.Store) *Picker {
-	return &Picker{store: store}
+	return &Picker{store: store, maxPerProject: 1}
+}
+
+// SetMaxPerProject sets the per-project concurrency cap
+// (TORQUE_SCHED_MAX_PER_PROJECT). Values below 1 fall back to 1. Call only
+// before the picker is shared across goroutines.
+func (p *Picker) SetMaxPerProject(n int) {
+	if n < 1 {
+		n = 1
+	}
+	p.maxPerProject = n
 }
 
 // SetProjectAllowlist installs a project-scope filter. When the provided
@@ -194,7 +207,7 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 		}
 		depStatuses, statusBulkErr = p.store.GetTaskStatuses(depIDs)
 	}
-	busyProjects := make(map[string]struct{}, len(busy))
+	busyProjects := make(map[string]int, len(busy))
 	for _, t := range busy {
 		if t.Kind == "internal" || t.Kind == "plan" || t.Kind == "parent" || t.Kind == "issue" {
 			continue
@@ -203,14 +216,14 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 			continue
 		}
 		if pk := projectKey(t); pk != "" {
-			busyProjects[pk] = struct{}{}
+			busyProjects[pk]++
 		}
 	}
 
 	// Also track project_ids we've already tentatively allocated during THIS
 	// pick pass so two same-project tasks don't both get selected in a
 	// single tick.
-	allocated := make(map[string]struct{})
+	allocated := make(map[string]int)
 
 	record := func(taskID, reason string) {
 		decisions.Counts[reason]++
@@ -293,11 +306,11 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 		// dep-blocked task cannot silently starve other same-project
 		// siblings (CW-20260418-0003).
 		if pk != "" && task.Kind != "internal" {
-			if _, inflight := busyProjects[pk]; inflight {
+			if busyProjects[pk] >= p.maxPerProject {
 				record(task.ID, SkipReasonProjectBusy)
 				continue
 			}
-			if _, taken := allocated[pk]; taken {
+			if busyProjects[pk]+allocated[pk] >= p.maxPerProject {
 				record(task.ID, SkipReasonProjectContention)
 				continue
 			}
@@ -361,7 +374,7 @@ func (p *Picker) Pick(limit int) ([]sqlstore.TaskRecord, PickDecisions, error) {
 		// All checks passed — now reserve the per-project slot for this
 		// tick (skipping kind=internal so it never claims a slot).
 		if pk != "" && task.Kind != "internal" {
-			allocated[pk] = struct{}{}
+			allocated[pk]++
 		}
 
 		eligible = append(eligible, task)

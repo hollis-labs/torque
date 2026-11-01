@@ -165,6 +165,7 @@ func New(
 	// never mutated. An empty list leaves the picker in default
 	// all-projects mode.
 	picker.SetProjectAllowlist(cfg.ProjectAllowlist)
+	picker.SetMaxPerProject(cfg.MaxPerProject)
 
 	s := &Scheduler{
 		store:             store,

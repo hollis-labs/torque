@@ -315,3 +315,48 @@ func TestPickerManualDoingDoesNotBlockProject(t *testing.T) {
 		}
 	}
 }
+
+func TestPickerMaxPerProject(t *testing.T) {
+	mk := func(store *sqlstore.Store, id, status string, prio int) {
+		require.NoError(t, store.CreateTask(&sqlstore.TaskRecord{
+			ID: id, Title: id, Status: status, Priority: prio,
+			Executor: "cli", AgentProfile: "cli-profile",
+			ProjectID: sql.NullString{String: "PRJ-M", Valid: true},
+		}))
+	}
+
+	t.Run("cap 2 allows two in one tick", func(t *testing.T) {
+		store := setupPickerStore(t)
+		picker := scheduler.NewPicker(store)
+		picker.SetMaxPerProject(2)
+		mk(store, "M-1", "todo", 1)
+		mk(store, "M-2", "todo", 2)
+		mk(store, "M-3", "todo", 3)
+		picked, _, err := picker.Pick(10)
+		require.NoError(t, err)
+		require.Len(t, picked, 2)
+	})
+
+	t.Run("cap 2 counts in-flight", func(t *testing.T) {
+		store := setupPickerStore(t)
+		picker := scheduler.NewPicker(store)
+		picker.SetMaxPerProject(2)
+		mk(store, "M-D", "doing", 1)
+		mk(store, "M-1", "todo", 1)
+		mk(store, "M-2", "todo", 2)
+		picked, _, err := picker.Pick(10)
+		require.NoError(t, err)
+		require.Len(t, picked, 1)
+	})
+
+	t.Run("invalid cap falls back to 1", func(t *testing.T) {
+		store := setupPickerStore(t)
+		picker := scheduler.NewPicker(store)
+		picker.SetMaxPerProject(0)
+		mk(store, "M-1", "todo", 1)
+		mk(store, "M-2", "todo", 2)
+		picked, _, err := picker.Pick(10)
+		require.NoError(t, err)
+		require.Len(t, picked, 1)
+	})
+}
