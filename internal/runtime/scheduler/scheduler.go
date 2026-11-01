@@ -790,6 +790,7 @@ func (s *Scheduler) recoverStuckTask(ctx context.Context, mode healthscan.Mode, 
 // caller must not requeue the task or clean up the run's worktree as if the
 // run had been lost (CW-20260912-0003).
 func (s *Scheduler) reclaimRun(ctx context.Context, op string, runID int64, taskID, message, eventPayload string) (reclaimed bool, err error) {
+	s.stopTetherSession(ctx, runID)
 	err = s.stateWriter.Submit(ctx, op, func(tx *sqlstore.WriteTx) error {
 		reclaimed = false
 		updated, err := tx.CompleteRunWithCost(runID, sqlstore.RunCompletion{
@@ -814,6 +815,27 @@ func (s *Scheduler) reclaimRun(ctx context.Context, op string, runID int64, task
 		return nil
 	})
 	return reclaimed && err == nil, err
+}
+
+// stopTetherSession best-effort stops the Tether session a still-running run
+// launched. After a Torque restart nothing is watching that session and its
+// idempotency key is per run id, so a re-dispatch makes a new session; stopping
+// the old one (rather than reattaching) keeps one live session per task. Every
+// recovery path reclaims through reclaimRun, so every path stops it.
+func (s *Scheduler) stopTetherSession(ctx context.Context, runID int64) {
+	if s.sessionStopper == nil {
+		return
+	}
+	run, err := s.store.GetRun(runID)
+	if err != nil || run.Status != "running" || run.TetherSessionID.String == "" {
+		return
+	}
+	sid := run.TetherSessionID.String
+	if serr := s.sessionStopper(ctx, sid); serr != nil {
+		log.Printf("[scheduler] orphan recovery: stop tether session %s (run %d): %v", sid, runID, serr)
+	} else {
+		log.Printf("[scheduler] orphan recovery: stopped tether session %s (run %d)", sid, runID)
+	}
 }
 
 // recoverOrphanRun reclaims a run pinned at `running` with no
@@ -966,13 +988,6 @@ func (s *Scheduler) recoverOrphanedWorker(ctx context.Context, w StaleWorker) {
 		if run, rerr := s.store.GetRun(w.RunID); rerr != nil {
 			log.Printf("[scheduler] orphan recovery: get run %d: %v", w.RunID, rerr)
 		} else if run.Status == "running" {
-			if sid := run.TetherSessionID.String; sid != "" && s.sessionStopper != nil {
-				if serr := s.sessionStopper(ctx, sid); serr != nil {
-					log.Printf("[scheduler] orphan recovery: stop tether session %s (run %d): %v", sid, w.RunID, serr)
-				} else {
-					log.Printf("[scheduler] orphan recovery: stopped tether session %s (run %d)", sid, w.RunID)
-				}
-			}
 			reclaimed, werr := s.reclaimRun(ctx, "scheduler_orphan_recovery", w.RunID, w.TaskID,
 				"orphaned: worker process gone, auto-recovered by scheduler",
 				`{"reason":"worker_process_gone"}`)

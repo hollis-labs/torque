@@ -26,7 +26,7 @@ func TestUnixSocketBaseURL(t *testing.T) {
 
 	for _, u := range []string{"unix:" + sock, "unix://" + sock} {
 		c := New(u, "")
-		cap, err := c.Capacity(context.Background(), "")
+		cap, err := c.Capacity(context.Background())
 		require.NoError(t, err, u)
 		require.Equal(t, 3, cap.ActiveSessions)
 	}

@@ -145,7 +145,7 @@ type fakeTether struct {
 	runErr error
 }
 
-func (f *fakeTether) Capacity(context.Context, string) (*tetherclient.Capacity, error) {
+func (f *fakeTether) Capacity(context.Context) (*tetherclient.Capacity, error) {
 	return f.cap, f.capErr
 }
 
@@ -189,7 +189,12 @@ func TestWorkstreamClaimRespectsTetherCapacity(t *testing.T) {
 	require.Equal(t, service.DeferEnvironmentCap, deferReason(full, "a"))
 	require.Equal(t, service.DeferEnvironmentPaused, deferReason(&fakeTether{cap: &tetherclient.Capacity{Admission: "paused", Reason: "maintenance"}}, "b"))
 	require.Equal(t, service.DeferCapacityUnknown, deferReason(&fakeTether{capErr: errors.New("boom")}, "c"), "fails closed")
-	require.Equal(t, service.DeferCapacityUnknown, deferReason(&fakeTether{cap: &tetherclient.Capacity{EnvironmentID: "other", MaxSessions: 9, Admission: "open"}}, "d"), "wrong environment")
+	// Tether reports "local" while the claim names "agent-os": informational
+	// unless TORQUE_TETHER_ENVIRONMENT_ID is set, so the cap still applies.
+	require.Equal(t, service.DeferEnvironmentCap, deferReason(&fakeTether{cap: &tetherclient.Capacity{EnvironmentID: "local", MaxSessions: 2, ActiveSessions: 2, Admission: "open"}}, "d0"))
+	svc.Workstream.SetTetherEnvironment("agent-os")
+	require.Equal(t, service.DeferCapacityUnknown, deferReason(&fakeTether{cap: &tetherclient.Capacity{EnvironmentID: "local", MaxSessions: 9, Admission: "open"}}, "d"), "explicit environment mismatch")
+	svc.Workstream.SetTetherEnvironment("")
 
 	// A claim with no environment_id does not consult Tether at all.
 	svc.Workstream.SetTether(&fakeTether{capErr: errors.New("must not be called")})
@@ -200,7 +205,7 @@ func TestWorkstreamClaimRespectsTetherCapacity(t *testing.T) {
 
 	// Room in the environment: dispatch. Then the same key returns the same
 	// lease even once the environment is full.
-	svc.Workstream.SetTether(&fakeTether{cap: &tetherclient.Capacity{EnvironmentID: "agent-os", MaxSessions: 3, ActiveSessions: 1, Admission: "open"}})
+	svc.Workstream.SetTether(&fakeTether{cap: &tetherclient.Capacity{EnvironmentID: "local", MaxSessions: 3, ActiveSessions: 1, Admission: "open"}})
 	r, err = svc.Workstream.ClaimNext(ctx, in("e"))
 	require.NoError(t, err)
 	require.Equal(t, service.ClaimDispatch, r.Outcome)
@@ -255,8 +260,9 @@ func TestWorkstreamSweepExpiredClaims(t *testing.T) {
 		require.Equal(t, service.SweepUnverified, e.Action)
 	}
 
-	// With run state: ended and missing runs requeue; a live run is left alone;
-	// an unexpired lease is not looked at.
+	// With run state: ended runs requeue; a live run is left alone; a run
+	// Tether 404s (endpoint unverified) is left alone, not requeued; an
+	// unexpired lease is not looked at.
 	svc.Workstream.SetTether(&fakeTether{runs: map[string]*tetherclient.RunState{
 		"run-ended":  {Status: "dissolved", EndedAt: "2026-10-11T07:00:00Z"},
 		"run-active": {Status: "running"},
@@ -269,16 +275,18 @@ func TestWorkstreamSweepExpiredClaims(t *testing.T) {
 		actions[e.TeamRunID] = e.Action
 	}
 	require.Equal(t, map[string]string{
-		"run-ended": service.SweepRequeued, "run-active": service.SweepRunActive, "run-gone": service.SweepRequeued,
+		"run-ended": service.SweepRequeued, "run-active": service.SweepRunActive, "run-gone": service.SweepUnverified,
 	}, actions)
 	require.Equal(t, "todo", status("run-ended"))
-	require.Equal(t, "todo", status("run-gone"))
+	require.Equal(t, "doing", status("run-gone"))
 	require.Equal(t, "doing", status("run-active"))
 	require.Equal(t, "doing", status("run-fresh"))
 
 	// A requeued claim is released, so a second sweep does not touch it again.
 	out, err = svc.Workstream.SweepExpiredClaims(ctx)
 	require.NoError(t, err)
-	require.Len(t, out, 1)
-	require.Equal(t, "run-active", out[0].TeamRunID)
+	require.Len(t, out, 2)
+	for _, e := range out {
+		require.Contains(t, []string{"run-active", "run-gone"}, e.TeamRunID)
+	}
 }

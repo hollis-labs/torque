@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
@@ -53,6 +54,11 @@ type WorkstreamService struct {
 	projectCap int
 	leaseTTL   time.Duration
 	tether     TetherReader
+	// tetherEnv, when set (TORQUE_TETHER_ENVIRONMENT_ID), is the environment_id
+	// /capacity must report. Empty means the reported id is informational.
+	tetherEnv string
+	// runLookupWarned makes the "/teams/runs unavailable" log fire once.
+	runLookupWarned atomic.Bool
 }
 
 // TetherReader is the read-only slice of Tether's API the claim path uses:
@@ -60,13 +66,19 @@ type WorkstreamService struct {
 // is not consulted: environment_id is recorded on the claim and not enforced,
 // and expired leases are surfaced but never requeued.
 type TetherReader interface {
-	Capacity(ctx context.Context, environmentID string) (*tetherclient.Capacity, error)
+	Capacity(ctx context.Context) (*tetherclient.Capacity, error)
 	Run(ctx context.Context, runID string) (*tetherclient.RunState, error)
 }
 
 // SetTether installs the Tether reader. A nil *tetherclient.Client must be
 // passed as an untyped nil so the interface stays nil.
 func (s *WorkstreamService) SetTether(t TetherReader) { s.tether = t }
+
+// SetTetherEnvironment makes the capacity check require Tether's /capacity to
+// report this environment_id. Unset (the default), the reported id is
+// informational: Tether answers for its own environment (e.g. "local"), which
+// need not match the id a team run names in its claim.
+func (s *WorkstreamService) SetTetherEnvironment(id string) { s.tetherEnv = strings.TrimSpace(id) }
 
 // SetGo installs the go/pause source, normally the scheduler's enabled flag.
 // Without one, claims defer as paused: a process that cannot see the switch
@@ -139,7 +151,7 @@ func (s *WorkstreamService) ClaimNext(ctx context.Context, in ClaimInput) (*Clai
 			}
 		}
 		if s.goFn != nil && s.goFn() {
-			if d := s.capacityDefer(ctx, in.EnvironmentID); d != nil {
+			if d := s.capacityDefer(ctx); d != nil {
 				return d, nil
 			}
 		}
@@ -203,13 +215,13 @@ func (s *WorkstreamService) ClaimNext(ctx context.Context, in ClaimInput) (*Clai
 
 // capacityDefer returns a Defer when Tether says the environment cannot take
 // another session, or when it cannot be read, else nil.
-func (s *WorkstreamService) capacityDefer(ctx context.Context, env string) *ClaimResult {
-	c, err := s.tether.Capacity(ctx, env)
+func (s *WorkstreamService) capacityDefer(ctx context.Context) *ClaimResult {
+	c, err := s.tether.Capacity(ctx)
 	if err != nil {
-		log.Printf("[workstream] capacity read for %q failed: %v", env, err)
+		log.Printf("[workstream] capacity read failed: %v", err)
 		return &ClaimResult{Outcome: ClaimDefer, Reason: DeferCapacityUnknown, Diagnostics: "Tether capacity read failed; not handing out work blind"}
 	}
-	if c.EnvironmentID != "" && c.EnvironmentID != env {
+	if s.tetherEnv != "" && c.EnvironmentID != "" && c.EnvironmentID != s.tetherEnv {
 		return &ClaimResult{Outcome: ClaimDefer, Reason: DeferCapacityUnknown, Diagnostics: "Tether reported capacity for a different environment"}
 	}
 	if strings.EqualFold(c.Admission, "paused") {
@@ -345,9 +357,9 @@ func newClaimID() string {
 
 // Sweep actions.
 const (
-	SweepRequeued   = "requeued"   // Tether says the run ended or is gone; task back to todo
+	SweepRequeued   = "requeued"   // Tether says the run ended; task back to todo
 	SweepRunActive  = "run_active" // lease expired but the run is still alive; left alone
-	SweepUnverified = "unverified" // run state could not be read, or no Tether reader; left alone
+	SweepUnverified = "unverified" // run state could not be read (incl. 404), or no Tether reader; left alone
 )
 
 // ExpiredClaim reports one expired lease and what the sweep did.
@@ -384,7 +396,15 @@ func (s *WorkstreamService) SweepExpiredClaims(ctx context.Context) ([]ExpiredCl
 		run, err := s.tether.Run(ctx, c.TeamRunID)
 		switch {
 		case errors.Is(err, tetherclient.ErrRunNotFound):
-			e.Detail = "Tether has no such run"
+			// GET /teams/runs/{id} is unverified against Tether: a 404 may mean
+			// the endpoint is missing, so it is not proof the run ended. Leave
+			// the claim alone and say so once.
+			if s.runLookupWarned.CompareAndSwap(false, true) {
+				log.Printf("[workstream] Tether returned 404 for /teams/runs/%s; the endpoint is unverified, so expired leases are left unverified rather than requeued", c.TeamRunID)
+			}
+			e.Detail = "Tether returned 404 for the run (endpoint unverified); left alone"
+			out = append(out, e)
+			continue
 		case err != nil:
 			e.Detail = "run state unreadable: " + err.Error()
 			out = append(out, e)

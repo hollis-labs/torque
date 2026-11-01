@@ -55,6 +55,7 @@ func Executors(reg *executor.Registry, deps *agent.Dependencies) error {
 // TORQUE_TETHER_STOP_AFTER_FINAL_TURN (opt-in reaper grace, e.g. 30s),
 // TORQUE_TETHER_DEFER_MAX (default 30m), TORQUE_TETHER_RUN_TIMEOUT (default 2h),
 // TORQUE_TETHER_POLL_INTERVAL (default 3s); durations like "90s".
+// TORQUE_TETHER_ENVIRONMENT_ID (serve.go) is optional: when set, /capacity must report it.
 func tetherExecutor(deps *agent.Dependencies) executor.Executor {
 	cfg := tetherexec.Config{
 		DefaultLaunch:      os.Getenv("TORQUE_TETHER_LAUNCH"),
