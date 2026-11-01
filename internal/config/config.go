@@ -245,7 +245,7 @@ func Load() (*Config, error) {
 			// safe range is roughly [60, 300].
 			StuckGraceSeconds: envInt("TORQUE_SCHED_STUCK_GRACE", 60),
 			Enabled:           envBool("TORQUE_SCHED_ENABLED", true),
-			MaxPerProject:     envInt("TORQUE_SCHED_MAX_PER_PROJECT", 2),
+			MaxPerProject:     envInt("TORQUE_SCHED_MAX_PER_PROJECT", 1),
 			DefaultMerge:      envOr("TORQUE_SCHED_DEFAULT_MERGE", "none"),
 			WorktreeCleanup:   envOr("TORQUE_SCHED_WORKTREE_CLEANUP", "on_merge"),
 			WorktreePerRun:    envBool("TORQUE_WORKTREE_PER_RUN", false),
