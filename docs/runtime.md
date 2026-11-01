@@ -37,7 +37,7 @@ Current behavior:
 - Tracks worker heartbeats
 - Supports session-scoped enable/disable
 - Exposes read-only live state to stdio MCP clients via `torque_scheduler_status`, which proxies `torque serve`'s `/api/v1/scheduler/status` when no in-process scheduler exists
-- Applies a max-per-project concurrency limit
+- Applies a per-project concurrency limit, fixed at 1 in the picker (`internal/runtime/scheduler/picker.go`); it is not configurable
 - Can run with optional per-run worktrees
 - Uses a project allowlist stopgap from env vars today
 
@@ -53,10 +53,10 @@ calls while preserving MCP as the source for fresh state and updates.
 
 Important env vars:
 
-- `TORQUE_SCHED_WORKERS`
+- `TORQUE_SCHED_WORKERS` — global cap on concurrent runs (default 3). Read once at startup; restart `torque serve` to change it.
 - `TORQUE_SCHED_INTERVAL`
 - `TORQUE_SCHED_ENABLED`
-- `TORQUE_SCHED_MAX_PER_PROJECT`
+- `TORQUE_SCHED_MAX_PER_PROJECT` — parsed into config (default 2) but currently ignored by the scheduler; the per-project limit is hardcoded to 1. Setting it has no effect.
 - `TORQUE_SCHED_STALE`
 - `TORQUE_WORKTREE_PER_RUN`
 - `TORQUE_WORKTREE_ROOT`
