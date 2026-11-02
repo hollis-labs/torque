@@ -53,16 +53,20 @@ calls while preserving MCP as the source for fresh state and updates.
 
 Important env vars:
 
-- `TORQUE_SCHED_WORKERS`
+- `TORQUE_SCHED_WORKERS` (global cap on concurrent task runs across all projects; default 3)
 - `TORQUE_SCHED_INTERVAL`
 - `TORQUE_SCHED_ENABLED`
-- `TORQUE_SCHED_MAX_PER_PROJECT` (max concurrent `doing` tasks per project; default 1)
+- `TORQUE_SCHED_MAX_PER_PROJECT` (max concurrent `doing` tasks per project; default 1; values below 1 fall back to 1)
 - `TORQUE_SCHED_STALE`
 - `TORQUE_WORKTREE_PER_RUN`
 - `TORQUE_WORKTREE_ROOT`
 - `TORQUE_WORKTREE_KEEP_DAYS`
 - `TORQUE_PROJECT_ID`
 - `TORQUE_PROJECT_IDS`
+
+The scheduler reads these env vars once at `torque serve` startup. Changing
+`TORQUE_SCHED_WORKERS` (or `TORQUE_SCHED_MAX_PER_PROJECT`) requires restarting
+the server; the running scheduler does not pick up the change.
 
 ## Feature Flags
 
