@@ -87,8 +87,9 @@ Idempotent: a task whose `unit_run.state` is `active` returns that run
 
 ## Finish
 
-The orchestrator adds a task comment starting `RESULT:` (outcome, PR links,
-evidence), then calls `tether_team_report_result`; Tether dissolves the run.
+The orchestrator adds a task comment starting `RESULT <run id>:` (outcome, PR
+links, evidence; the run id is in its brief, and Torque ignores any RESULT
+comment without it, since comment authorship is not verified), then calls `tether_team_report_result`; Tether dissolves the run.
 When Torque sees the run ended:
 
 - with a `RESULT:` comment since dispatch: the task moves per `on_done` as the
@@ -140,9 +141,27 @@ On the `torque serve` process (restart required):
 After a restart Torque re-attaches to every `doing` task whose `unit_run` is
 `active`.
 
+## Landing
+
+The unit path does not run the executor path's landing gate on its own: the
+reviewer merges on green CI, before the orchestrator reports, as part of the
+protocol in the brief. Torque does not verify the merge. Moving the task to
+`done` (`on_done=close` or `notify`) still passes the task service's normal
+`done` checks.
+
+## Stuck formations
+
+A formation whose outcome stays unknown is replayed with the same key at most
+`MaxReplays` (5) times or for `FormingGiveUp` (10 minutes). Then Torque looks
+for the team by its definition id (`unit-<task id>-a<N>`) in Tether's rosters
+and dissolves it if found; otherwise the unit is `unconfirmed`: the task stays
+`todo` and manual, `blocked_reason` names the idempotency key, and it counts
+against `TORQUE_UNIT_MAX_ACTIVE` until an operator checks Tether and dispatches
+with `clear_unconfirmed`.
+
 ## Known limits
 
-- The result is the orchestrator's `RESULT:` task comment, because the
+- The result is the orchestrator's `RESULT <run id>:` task comment, because the
   `report_result` body lands in the owner seat's mailbox and Torque does not
   read it. The orchestrator needs Torque MCP access.
 - Run end is read from the roster (run status terminal, or no active member).

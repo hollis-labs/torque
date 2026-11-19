@@ -81,3 +81,36 @@ func TestTeamRunEndedByStatus(t *testing.T) {
 	assert.True(t, TeamRunInfo{Status: "working", Members: []TeamMember{owner, {Slot: "workers", Status: "stopped"}}}.Ended())
 	assert.False(t, TeamRunInfo{Status: "working", Members: []TeamMember{owner}}.Ended())
 }
+
+func TestTeamRunEndedRequiresEveryMemberStoppedOrReleased(t *testing.T) {
+	owner := TeamMember{Slot: "coordinator", Status: "active"}
+	mk := func(sts ...string) TeamRunInfo {
+		r := TeamRunInfo{Status: "working", Members: []TeamMember{owner}}
+		for _, s := range sts {
+			r.Members = append(r.Members, TeamMember{Slot: "workers", Status: s})
+		}
+		return r
+	}
+	assert.True(t, mk("stopped", "released").Ended())
+	assert.False(t, mk("stopped", "provisioning").Ended(), "provisioning is live")
+	assert.False(t, mk("stopped", "starting-up").Ended(), "an unknown status is live")
+	assert.False(t, mk("stopped", "active").Ended())
+	assert.False(t, mk().Ended(), "no agent members is not ended")
+}
+
+func TestFindTeamRunPages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("after") == "" {
+			_, _ = w.Write([]byte(`{"runs":[{"run":{"id":"r1","team_id":"a"}}],"next_after":"r1"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"runs":[{"run":{"id":"r2","team_id":"b"}}]}`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "t")
+	id, err := c.FindTeamRun(context.Background(), "b")
+	require.NoError(t, err)
+	assert.Equal(t, "r2", id)
+	_, err = c.FindTeamRun(context.Background(), "zzz")
+	assert.ErrorIs(t, err, ErrRunNotFound)
+}

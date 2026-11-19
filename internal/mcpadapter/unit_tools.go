@@ -16,7 +16,7 @@ import (
 
 const unitDispatchDescription = `Dispatch a unit of work: launch a Tether team for a task that carries an execution plan (metadata.unit_plan).
 Use to start a unit on demand, with or without the scheduler enabled. Torque (no agent) validates the plan, forms a team (1 orchestrator + 1-3 workers + 1 reviewer; Astra orchestrator/reviewer, Sol or Agy workers), briefs the orchestrator with the task, workstream, goal, done-when, scope and escalation target, records the team run id on the task (metadata.unit_run) and moves the task to doing. The team dissolves when the orchestrator reports its result; Torque then moves the task to review (per on_done) and posts the result, or blocks it with the reason.
-Idempotent: a task that already has a live run returns that run with reused=true. If formation or briefing fails the run is dissolved, the task stays todo with a blocked_reason and is set manual so the scheduler will not retry it; fix the cause and call again. The plan contract is in docs/unit-of-work.md; create a task with torque_task_create_from_template (template unit-of-work).
+Idempotent: a task that already has a live run returns that run with reused=true. A formation whose outcome is unknown is replayed with the same idempotency key a bounded number of times, then Torque looks for the team and dissolves it, or parks the task as unconfirmed (blocked_reason names the key); clear it with clear_unconfirmed after checking Tether. If briefing fails the run is dissolved, the task stays todo with a blocked_reason and is set manual so the scheduler will not retry it; fix the cause and call again. The plan contract is in docs/unit-of-work.md; create a task with torque_task_create_from_template (template unit-of-work).
 Response shape: data = {task_id, run_id, attempt, state, reused}. Runs in the serve process; stdio MCP clients are proxied to POST /api/v1/units/dispatch.
 Example: {"task_id":"CW-20261118-0050","workers":"2","worker_runtime":"agy"}`
 
@@ -26,12 +26,14 @@ func (a *Adapter) registerUnitTools() {
 		withString("task_id", required(), desc("Task with an execution plan (metadata.unit_plan).")),
 		withString("workers", desc("Override the plan's worker count, 1-3. Above 1 needs registered pool identities. (integer)")),
 		withString("worker_runtime", desc("Override the plan's worker runtime: sol or agy.")),
+		withString("clear_unconfirmed", desc("true after you checked Tether and a stuck, unconfirmed formation left no team (see the task's blocked_reason); starts a new attempt. (boolean)")),
 	), a.handleUnitDispatch)
 }
 
 func (a *Adapter) handleUnitDispatch(ctx context.Context, req map[string]any) (any, error) {
 	in := service.UnitDispatchInput{
 		TaskID: reqStr(req, "task_id"), Workers: reqInt(req, "workers"), WorkerRuntime: reqStr(req, "worker_runtime"),
+		ClearUnconfirmed: reqStrBool(req, "clear_unconfirmed"),
 	}
 	if in.TaskID == "" {
 		return errResult(ErrCodeArgInvalid, "task_id required", "task_id")
@@ -58,7 +60,7 @@ func proxyUnitDispatch(ctx context.Context, in service.UnitDispatchInput) (*serv
 		return nil, fmt.Errorf("load config for unit dispatch proxy: %w", err)
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d/api/v1/units/dispatch", cfg.HTTPPort)
-	body, _ := json.Marshal(map[string]any{"task_id": in.TaskID, "workers": in.Workers, "worker_runtime": in.WorkerRuntime})
+	body, _ := json.Marshal(map[string]any{"task_id": in.TaskID, "workers": in.Workers, "worker_runtime": in.WorkerRuntime, "clear_unconfirmed": in.ClearUnconfirmed})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err

@@ -12,6 +12,8 @@ type dispatchUnitRequest struct {
 	TaskID        string `json:"task_id"`
 	Workers       int    `json:"workers"`
 	WorkerRuntime string `json:"worker_runtime"`
+	// ClearUnconfirmed: the operator checked Tether; a stuck formation left no team.
+	ClearUnconfirmed bool `json:"clear_unconfirmed"`
 }
 
 // dispatchUnit is the explicit "dispatch unit" action: it forms a Tether team
@@ -25,7 +27,7 @@ func (s *Server) dispatchUnit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := s.svc.Unit.Dispatch(r.Context(), service.UnitDispatchInput{
-		TaskID: req.TaskID, Workers: req.Workers, WorkerRuntime: req.WorkerRuntime,
+		TaskID: req.TaskID, Workers: req.Workers, WorkerRuntime: req.WorkerRuntime, ClearUnconfirmed: req.ClearUnconfirmed,
 	})
 	if err != nil {
 		var verr *service.ValidationError

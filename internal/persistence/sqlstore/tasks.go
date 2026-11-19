@@ -1402,8 +1402,8 @@ func updateTaskExec(ex dbExecer, id string, u TaskUpdate) error {
 		setClauses = append(setClauses, `metadata = CASE
 			WHEN json_valid(metadata) AND json_extract(metadata, '$.unit_run') IS NOT NULL
 			THEN json_set(CASE WHEN json_valid(?) THEN ? ELSE '{}' END, '$.unit_run', json(json_extract(metadata, '$.unit_run')))
-			ELSE ? END`)
-		args = append(args, *u.Metadata, *u.Metadata, *u.Metadata)
+			ELSE CASE WHEN json_valid(?) THEN json_remove(?, '$.unit_run') ELSE ? END END`)
+		args = append(args, *u.Metadata, *u.Metadata, *u.Metadata, *u.Metadata, *u.Metadata)
 	}
 	if u.UnitRun != nil {
 		setClauses = append(setClauses, "metadata = json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.unit_run', json(?))")
@@ -1723,4 +1723,16 @@ func allocTaskID(q taskIDQuerier, now time.Time) (string, error) {
 		return "", fmt.Errorf("NextTaskID: advance counter: %w", err)
 	}
 	return fmt.Sprintf("%s%04d", prefix, seq), nil
+}
+
+// CountUnitsInFlight counts tasks whose unit-of-work record says a team may be
+// live or unaccounted for: forming, active, closing, unconfirmed, or any state
+// flagged unconfirmed (a run that could not be confirmed ended).
+func (s *Store) CountUnitsInFlight() (int, error) {
+	var n int
+	err := s.ReadDB().QueryRow(`SELECT COUNT(*) FROM tasks
+		WHERE json_valid(metadata) AND (
+			json_extract(metadata, '$.unit_run.state') IN ('forming', 'active', 'closing', 'unconfirmed')
+			OR json_extract(metadata, '$.unit_run.unconfirmed') = 1)`).Scan(&n)
+	return n, err
 }

@@ -91,24 +91,26 @@ type TeamMember struct {
 	Status string `json:"status"`
 }
 
-// Ended reports whether the run is over: a terminal run status, or no
-// non-owner member still active (the coordinator slot has no member).
+// Ended reports whether the run is over: a terminal run status, or at least
+// one non-owner member and every one of them stopped or released. A member in
+// any other state (active, provisioning, or one this client does not know) is
+// live; "not active" is never read as ended.
 func (r TeamRunInfo) Ended() bool {
 	switch strings.ToLower(r.Status) {
-	case "completed", "failed", "canceled", "cancelled", "rejected", "dissolved", "ended":
+	case "completed", "failed", "canceled", "cancelled", "dissolved":
 		return true
 	}
-	// Dissolve stops or releases every member; a roster with members and none
-	// active is an ended run even if the run status string is unfamiliar.
 	// The coordinator slot is the owner's seat; it stays "active" after the
-	// team has stopped, so it does not count as a live member.
+	// team has stopped, so it does not count.
 	agents := 0
 	for _, m := range r.Members {
 		if m.Slot == "coordinator" {
 			continue
 		}
 		agents++
-		if strings.EqualFold(m.Status, "active") {
+		switch strings.ToLower(m.Status) {
+		case "stopped", "released":
+		default:
 			return false
 		}
 	}
@@ -220,4 +222,39 @@ func (c *Client) TeamRun(ctx context.Context, runID string) (*TeamRunInfo, error
 	}
 	r := out.Runs[0]
 	return &TeamRunInfo{RunID: r.Run.ID, Status: r.Run.Status, Members: r.Members}, nil
+}
+
+// FindTeamRun looks a run up by its team definition id in the operator's
+// retained rosters (GET /teams/roster, paged). It returns ErrRunNotFound when
+// no listed run carries that team id.
+func (c *Client) FindTeamRun(ctx context.Context, teamID string) (string, error) {
+	after := ""
+	for page := 0; page < 10; page++ {
+		path := "/teams/roster?limit=100"
+		if after != "" {
+			path += "&after=" + url.QueryEscape(after)
+		}
+		var out struct {
+			Runs []struct {
+				Run struct {
+					ID     string `json:"id"`
+					TeamID string `json:"team_id"`
+				} `json:"run"`
+			} `json:"runs"`
+			NextAfter string `json:"next_after"`
+		}
+		if _, err := c.get(ctx, path, &out); err != nil {
+			return "", c.redact(err)
+		}
+		for _, r := range out.Runs {
+			if r.Run.TeamID == teamID {
+				return r.Run.ID, nil
+			}
+		}
+		if out.NextAfter == "" {
+			break
+		}
+		after = out.NextAfter
+	}
+	return "", ErrRunNotFound
 }

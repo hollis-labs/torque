@@ -92,3 +92,7 @@ func TestRefusedUnitIsPickedOnce(t *testing.T) {
 	assert.True(t, rec.Manual)
 	assert.Contains(t, rec.BlockedReason, "pool identities")
 }
+
+func (noTeams) FindTeamRun(context.Context, string) (string, error) {
+	return "", tetherclient.ErrRunNotFound
+}

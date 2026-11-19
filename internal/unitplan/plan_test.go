@@ -63,8 +63,8 @@ func TestFromMetadataMissing(t *testing.T) {
 func TestBriefCarriesTheContract(t *testing.T) {
 	p, err := unitplan.Parse([]byte(`{"workstream_id":"ws-9","goal":"do X","done_when":["X works"],"scope":{"out":["billing"]},"evidence":["CI link"]}`))
 	require.NoError(t, err)
-	b := p.Brief("CW-1", "Title")
-	for _, want := range []string{"CW-1", "ws-9", "do X", "X works", "billing", "CI link", "@chief", "RESULT:", "tether_team_report_result"} {
+	b := p.Brief("CW-1", "Title", "run-77")
+	for _, want := range []string{"CW-1", "ws-9", "do X", "X works", "billing", "CI link", "@chief", "RESULT run-77:", "tether_team_report_result"} {
 		assert.True(t, strings.Contains(b, want), "brief missing %q", want)
 	}
 }

@@ -24,19 +24,17 @@ const UnitRunKey = "unit_run"
 
 // Unit run states.
 const (
-	UnitForming = "forming" // key chosen, form may or may not have happened
-	UnitActive  = "active"  // team formed and briefed; being tracked
-	UnitDone    = "done"    // dissolved with a result
-	UnitClosing = "closing" // result or deadline seen; the run is being dissolved
-	UnitBlocked = "blocked" // dissolved without a result, timed out, or tracking gave up
-	UnitFailed  = "failed"  // formation or briefing failed; no run is live
+	UnitForming     = "forming"     // key chosen, form may or may not have happened
+	UnitActive      = "active"      // team formed and briefed; being tracked
+	UnitDone        = "done"        // dissolved with a result
+	UnitUnconfirmed = "unconfirmed" // formation outcome unknown and not resolved; an operator must check Tether
+	UnitClosing     = "closing"     // result or deadline seen; the run is being dissolved
+	UnitBlocked     = "blocked"     // dissolved without a result, timed out, or tracking gave up
+	UnitFailed      = "failed"      // formation or briefing failed; no run is live
 )
 
 // unitAuthor is the comment author for dispatcher-written comments.
 const unitAuthor = "torque-dispatch"
-
-// resultPrefix marks the orchestrator's result comment on the task.
-const resultPrefix = "RESULT:"
 
 // UnitTeams is the slice of Tether's team API the dispatcher uses.
 type UnitTeams interface {
@@ -44,6 +42,7 @@ type UnitTeams interface {
 	DelegateTeam(ctx context.Context, key, runID, address, body string) (*tetherclient.TeamResult, error)
 	DissolveTeam(ctx context.Context, key, runID string) error
 	TeamRun(ctx context.Context, runID string) (*tetherclient.TeamRunInfo, error)
+	FindTeamRun(ctx context.Context, teamID string) (string, error)
 }
 
 // UnitPins are the definition pins for each role. They must match
@@ -84,6 +83,11 @@ type UnitConfig struct {
 	// RetryBackoff spaces the same-key retries after an ambiguous formation
 	// failure; default 2s.
 	RetryBackoff time.Duration
+	// MaxReplays and FormingGiveUp bound the same-key replays of an ambiguous
+	// formation: after this many failed rounds, or this long, Torque stops
+	// replaying and looks for the run another way. Defaults 5 and 10m.
+	MaxReplays    int
+	FormingGiveUp time.Duration
 	// WorkerPool lists pre-registered worker identities (msg://agent/...). Needed
 	// only for plans with more than one worker.
 	WorkerPool []string
@@ -133,6 +137,10 @@ type UnitRun struct {
 	// Ambiguous: a formation call failed in a way that does not prove nothing
 	// formed. The next dispatch replays the same key to learn the run id.
 	Ambiguous bool `json:"ambiguous,omitempty"`
+	// Replays counts rounds of failed same-key formation; AmbiguousSince is when
+	// the first one failed.
+	Replays        int    `json:"replays,omitempty"`
+	AmbiguousSince string `json:"ambiguous_since,omitempty"`
 	// Unconfirmed: the run could not be confirmed ended when the unit was
 	// closed. Dispatch refuses until it is dissolved or seen ended.
 	Unconfirmed bool `json:"unconfirmed,omitempty"`
@@ -143,6 +151,9 @@ type UnitDispatchInput struct {
 	TaskID        string
 	Workers       int    // 0 = plan value
 	WorkerRuntime string // "" = plan value
+	// ClearUnconfirmed: the operator has checked Tether and the stuck formation
+	// (state unconfirmed) left no team; dispatch may proceed with a new attempt.
+	ClearUnconfirmed bool
 }
 
 // UnitDispatchResult is the outcome of a dispatch.
@@ -213,6 +224,12 @@ func (u *UnitService) Configure(teams UnitTeams, cfg UnitConfig) {
 	}
 	if cfg.RetryBackoff <= 0 {
 		cfg.RetryBackoff = 2 * time.Second
+	}
+	if cfg.MaxReplays <= 0 {
+		cfg.MaxReplays = 5
+	}
+	if cfg.FormingGiveUp <= 0 {
+		cfg.FormingGiveUp = 10 * time.Minute
 	}
 	if cfg.Pins == (UnitPins{}) {
 		cfg.Pins = DefaultUnitPins()
@@ -313,6 +330,8 @@ type unitAttempt struct {
 	plan      unitplan.Plan
 	run       UnitRun
 	confirm   *UnitRun // a previous unconfirmed run to settle first
+	settle    *UnitRun // a stuck formation to resolve before a new attempt
+	clear     bool
 	reused    *UnitDispatchResult
 	waitFor   chan struct{}
 	ambiguous bool
@@ -361,20 +380,39 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 	if int(plan.Workers) > 1 && len(u.cfg.WorkerPool) < int(plan.Workers) {
 		return nil, &ValidationError{Field: "workers", Message: fmt.Sprintf("%d workers need %d pre-registered pool identities; TORQUE_UNIT_WORKER_POOL lists %d (use workers=1 or register identities)", plan.Workers, plan.Workers, len(u.cfg.WorkerPool))}
 	}
-	if n := u.activeUnitsLocked(); n >= u.cfg.MaxActive {
+	n, cerr := u.store.CountUnitsInFlight()
+	if cerr != nil {
+		return nil, fmt.Errorf("unit dispatch: count units in flight: %w", cerr)
+	}
+	if hadRun && (prev.State == UnitForming || prev.State == UnitUnconfirmed || prev.Unconfirmed) {
+		n-- // this task's own record is already counted
+	}
+	if n >= u.cfg.MaxActive {
 		return nil, fmt.Errorf("%w: %d units in flight, limit %d (TORQUE_UNIT_MAX_ACTIVE)", ErrUnitCapacity, n, u.cfg.MaxActive)
 	}
 
 	at := &unitAttempt{task: t, plan: plan}
-	if hadRun && prev.RunID != "" && prev.Unconfirmed {
+	if hadRun && prev.RunID != "" && prev.Unconfirmed && prev.State != UnitUnconfirmed {
 		p := prev
 		at.confirm = &p
 	}
 	// A crashed or ambiguous formation reuses its key, so Tether's idempotency
-	// returns the run it already made instead of a second team.
+	// returns the run it already made instead of a second team. The replays are
+	// bounded: past the limit Torque stops replaying and looks for the run.
 	attempt := prev.Attempt + 1
-	if hadRun && prev.State == UnitForming {
-		attempt, at.ambiguous = prev.Attempt, true
+	carry := UnitRun{}
+	switch {
+	case hadRun && prev.State == UnitUnconfirmed:
+		p := prev
+		at.settle, at.clear = &p, in.ClearUnconfirmed
+	case hadRun && prev.State == UnitForming:
+		if prev.Replays >= u.cfg.MaxReplays || u.agedOut(prev) {
+			p := prev
+			at.settle, at.clear = &p, in.ClearUnconfirmed
+		} else {
+			attempt, at.ambiguous = prev.Attempt, true
+			carry.Replays, carry.AmbiguousSince = prev.Replays, prev.AmbiguousSince
+		}
 	}
 	if attempt < 1 {
 		attempt = 1
@@ -384,9 +422,10 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 	at.run = UnitRun{
 		Attempt: attempt, State: UnitForming, Key: fmt.Sprintf("torque-unit-%s-a%d", t.ID, attempt),
 		Workers: int(plan.Workers), WorkerRuntime: plan.WorkerRuntime, Ambiguous: at.ambiguous,
+		Replays: carry.Replays, AmbiguousSince: carry.AmbiguousSince,
 		StartedAt: started.Format(time.RFC3339), Deadline: started.Add(timeout).Format(time.RFC3339),
 	}
-	if at.confirm == nil {
+	if at.confirm == nil && at.settle == nil {
 		if err := u.saveRun(t.ID, at.run, sqlstore.TaskUpdate{}); err != nil {
 			return nil, fmt.Errorf("unit dispatch: record attempt: %w", err)
 		}
@@ -395,24 +434,11 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 	return at, nil
 }
 
-// activeUnitsLocked counts units in flight: running teams plus formations
-// underway. Caller holds u.mu.
-func (u *UnitService) activeUnitsLocked() int {
-	n := len(u.inflight)
-	tasks, err := u.task.List(sqlstore.TaskFilter{Status: "doing", Limit: 1000})
-	if err != nil {
-		return n
-	}
-	for i := range tasks {
-		r, ok := unitRunFrom(taskMetadata(&tasks[i]))
-		if !ok || (r.State != UnitActive && r.State != UnitClosing) {
-			continue
-		}
-		if _, forming := u.inflight[tasks[i].ID]; !forming {
-			n++
-		}
-	}
-	return n
+// agedOut reports whether an ambiguous formation has been unresolved for
+// longer than FormingGiveUp.
+func (u *UnitService) agedOut(r UnitRun) bool {
+	since, err := time.Parse(time.RFC3339, r.AmbiguousSince)
+	return err == nil && u.now().Sub(since) > u.cfg.FormingGiveUp
 }
 
 func (u *UnitService) endInflight(taskID string) {
@@ -469,6 +495,15 @@ func (u *UnitService) run(at *unitAttempt) (*UnitDispatchResult, error) {
 		}
 	}
 
+	if at.settle != nil {
+		if err := u.settleStuck(t.ID, *at.settle, at.clear); err != nil {
+			return nil, err
+		}
+		if err := u.saveRun(t.ID, run, sqlstore.TaskUpdate{}); err != nil {
+			return nil, fmt.Errorf("unit dispatch: record attempt: %w", err)
+		}
+	}
+
 	res, err := u.form(run, u.buildForm(t.ID, run.Attempt, plan, plan.TimeoutDuration(u.cfg.DefaultTimeout)))
 	if err != nil {
 		var te *tetherclient.TeamError
@@ -479,6 +514,10 @@ func (u *UnitService) run(at *unitAttempt) (*UnitDispatchResult, error) {
 		// "forming", and take the task out of the scheduler's reach; the next
 		// dispatch replays the same key to learn the run id.
 		run.Ambiguous = true
+		run.Replays++
+		if run.AmbiguousSince == "" {
+			run.AmbiguousSince = u.now().UTC().Format(time.RFC3339)
+		}
 		reason := fmt.Sprintf("unit dispatch attempt %d: team formation outcome unknown (%v); the next dispatch retries the same idempotency key", run.Attempt, err)
 		run.Reason = reason
 		manual := true
@@ -487,6 +526,13 @@ func (u *UnitService) run(at *unitAttempt) (*UnitDispatchResult, error) {
 		}
 		if _, cerr := u.comment.AddForTask(t.ID, unitAuthor, reason); cerr != nil {
 			log.Printf("[unit] %s: comment: %v", t.ID, cerr)
+		}
+		if run.Replays >= u.cfg.MaxReplays {
+			// Enough: stop replaying and look for the run another way.
+			if serr := u.settleStuck(t.ID, run, false); serr != nil {
+				return nil, serr
+			}
+			return nil, u.failDispatch(t.ID, run, "formation never confirmed; the team that was found was dissolved", err, "")
 		}
 		return nil, errors.New(reason)
 	}
@@ -502,7 +548,7 @@ func (u *UnitService) run(at *unitAttempt) (*UnitDispatchResult, error) {
 	}
 
 	ctx, cancel := u.netCtx(2 * time.Minute)
-	_, err = u.teams.DelegateTeam(ctx, run.Key+"-delegate", run.RunID, "@orchestrator", plan.Brief(t.ID, t.Title))
+	_, err = u.teams.DelegateTeam(ctx, run.Key+"-delegate", run.RunID, "@orchestrator", plan.Brief(t.ID, t.Title, run.RunID))
 	cancel()
 	if err != nil {
 		return nil, u.failDispatch(t.ID, run, "briefing the orchestrator failed", err, run.RunID)
@@ -598,6 +644,57 @@ func (u *UnitService) dissolve(runID, key string) error {
 		}
 	}
 	return err
+}
+
+// teamIDFor is the team definition id formed for a task attempt (see buildForm).
+func teamIDFor(taskID string, attempt int) string {
+	return "unit-" + strings.ToLower(taskID) + fmt.Sprintf("-a%d", attempt)
+}
+
+// settleStuck resolves a formation whose outcome is unknown and can no longer
+// be replayed. It looks the team up by its definition id in Tether's rosters
+// and dissolves it if found. If it cannot establish that nothing is running it
+// parks the task as "unconfirmed" (blocked_reason names the idempotency key and
+// team id, manual, counted against the unit limit) and returns an error. clear
+// is the operator's assertion that Tether holds nothing for this attempt.
+func (u *UnitService) settleStuck(taskID string, prev UnitRun, clear bool) error {
+	if clear {
+		return nil
+	}
+	teamID := teamIDFor(taskID, prev.Attempt)
+	ctx, cancel := u.netCtx(60 * time.Second)
+	runID, ferr := u.teams.FindTeamRun(ctx, teamID)
+	cancel()
+	if ferr == nil {
+		prev.RunID = runID
+		if derr := u.dissolve(runID, prev.Key); derr == nil {
+			return nil
+		} else {
+			return u.markUnconfirmed(taskID, prev, fmt.Sprintf("found run %s for team %s but could not dissolve it (%v)", runID, teamID, derr))
+		}
+	}
+	why := fmt.Sprintf("could not look for team %s in Tether (%v)", teamID, ferr)
+	if errors.Is(ferr, tetherclient.ErrRunNotFound) {
+		why = fmt.Sprintf("team %s is not in Tether's rosters, but its formation was never acknowledged", teamID)
+	}
+	return u.markUnconfirmed(taskID, prev, why)
+}
+
+func (u *UnitService) markUnconfirmed(taskID string, prev UnitRun, why string) error {
+	first := prev.State != UnitUnconfirmed
+	prev.State, prev.Unconfirmed, prev.Ambiguous = UnitUnconfirmed, true, false
+	reason := fmt.Sprintf("unit dispatch attempt %d unconfirmed: %s. Idempotency key %q (team %s). Check Tether, dissolve the team if it exists, then dispatch with clear_unconfirmed to start a new attempt", prev.Attempt, why, prev.Key, teamIDFor(taskID, prev.Attempt))
+	prev.Reason = reason
+	manual := true
+	if err := u.saveRun(taskID, prev, sqlstore.TaskUpdate{BlockedReason: &reason, Manual: &manual}); err != nil {
+		log.Printf("[unit] %s: record unconfirmed: %v", taskID, err)
+	}
+	if first {
+		if _, err := u.comment.AddForTask(taskID, unitAuthor, reason); err != nil {
+			log.Printf("[unit] %s: comment: %v", taskID, err)
+		}
+	}
+	return &ValidationError{Field: "run", Message: reason}
 }
 
 // confirmEnded settles a run that could not be confirmed ended earlier: it
@@ -813,7 +910,7 @@ func (u *UnitService) closeRun(taskID, runID string, ended, timedOut bool) {
 	case timedOut:
 		u.blockLocked(t, run, fmt.Sprintf("team run %s timed out at %s and was dissolved", runID, run.Deadline))
 	default:
-		u.blockLocked(t, run, fmt.Sprintf("team run %s dissolved without a result (no %q comment from the orchestrator since dispatch)", runID, resultPrefix))
+		u.blockLocked(t, run, fmt.Sprintf("team run %s dissolved without a result (no \"RESULT %s:\" comment since dispatch)", runID, runID))
 	}
 }
 
@@ -902,13 +999,17 @@ func (u *UnitService) findResult(taskID string, run UnitRun) (string, time.Time)
 	}
 	best, at := "", time.Time{}
 	for _, c := range comments {
-		if c.Author == unitAuthor || !strings.HasPrefix(strings.TrimSpace(c.Content), resultPrefix) {
+		// Comment authorship is not verified in Torque, so a result counts only if
+		// it carries this run's id: "RESULT <run id>: ...". The brief tells the
+		// orchestrator to write it that way.
+		marker := fmt.Sprintf("%s %s:", "RESULT", run.RunID)
+		if c.Author == unitAuthor || run.RunID == "" || !strings.HasPrefix(strings.TrimSpace(c.Content), marker) {
 			continue
 		}
 		if c.CreatedAt.Before(since.Add(-2 * time.Second)) {
 			continue
 		}
-		best, at = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(c.Content), resultPrefix)), c.CreatedAt
+		best, at = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(c.Content), marker)), c.CreatedAt
 	}
 	return best, at
 }

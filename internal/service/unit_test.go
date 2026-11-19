@@ -35,6 +35,8 @@ type fakeTeamsAPI struct {
 	ended       bool
 
 	refuseForm   int           // 4xx on form (nothing formed)
+	replayStatus int           // status answered for a key that was already formed (e.g. 409)
+	hideRoster   bool          // roster listing does not show formed teams
 	loseResponse bool          // form forms the team, then drops the connection
 	serverError  bool          // 500 before forming anything
 	failDeleg    bool          // delegate answers 502
@@ -42,6 +44,8 @@ type fakeTeamsAPI struct {
 	formDelay    time.Duration // slow formation
 	onForm       func()        // runs while a form is being handled
 	forms        []tetherclient.TeamForm
+	teamIDs      []string
+	teamRun      []string
 }
 
 func newFake() *fakeTeamsAPI {
@@ -91,12 +95,20 @@ func (f *fakeTeamsAPI) server(t *testing.T) *httptest.Server {
 			}
 			f.mu.Lock()
 			run, seen := f.runsByKey[key]
+			if seen && f.replayStatus != 0 {
+				st := f.replayStatus
+				f.mu.Unlock()
+				f.apiError(w, st, "idempotency conflict")
+				return
+			}
 			if !seen {
 				run = fmt.Sprintf("run-%d", len(f.runsByKey)+1)
 				f.runsByKey[key] = run
 				var form tetherclient.TeamForm
 				_ = json.Unmarshal(body, &form)
 				f.forms = append(f.forms, form)
+				f.teamIDs = append(f.teamIDs, fmt.Sprint(form.Team["id"]))
+				f.teamRun = append(f.teamRun, run)
 			}
 			f.mu.Unlock()
 			if lose {
@@ -135,6 +147,16 @@ func (f *fakeTeamsAPI) server(t *testing.T) *httptest.Server {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			run := r.URL.Query().Get("run_id")
+			if run == "" { // listing
+				items := []string{}
+				for i, id := range f.teamIDs {
+					if !f.hideRoster {
+						items = append(items, fmt.Sprintf(`{"run":{"id":%q,"team_id":%q}}`, f.teamRun[i], id))
+					}
+				}
+				_, _ = fmt.Fprintf(w, `{"runs":[%s]}`, strings.Join(items, ","))
+				return
+			}
 			if !f.knows(run) {
 				f.apiError(w, 404, "no such run")
 				return
@@ -303,7 +325,7 @@ func TestUnitFinishWithResultGoesToReview(t *testing.T) {
 	_, err := dispatch(svc, id)
 	require.NoError(t, err)
 
-	_, err = svc.Comment.AddForTask(id, "orchestrator", "RESULT: merged PR #9, CI green")
+	_, err = svc.Comment.AddForTask(id, "orchestrator", "RESULT run-1: merged PR #9, CI green")
 	require.NoError(t, err)
 	fake.set(func() { fake.ended = true })
 
@@ -325,7 +347,7 @@ func TestUnitOnDoneCloseAndNotify(t *testing.T) {
 			id := newUnitTaskOnDone(t, svc, nil, onDone)
 			_, err := dispatch(svc, id)
 			require.NoError(t, err)
-			_, _ = svc.Comment.AddForTask(id, "orchestrator", "RESULT: done")
+			_, _ = svc.Comment.AddForTask(id, "orchestrator", "RESULT run-1: done")
 			fake.set(func() { fake.ended = true })
 
 			waitStatus(t, svc, id, "done")
@@ -359,7 +381,7 @@ func TestUnitResultWithoutDissolveFinishesAndDissolves(t *testing.T) {
 	_, err := dispatch(svc, id)
 	require.NoError(t, err)
 
-	_, _ = svc.Comment.AddForTask(id, "orchestrator", "RESULT: all merged")
+	_, _ = svc.Comment.AddForTask(id, "orchestrator", "RESULT run-1: all merged")
 	waitStatus(t, svc, id, "review") // the run never ended on its own
 	assert.True(t, fake.isDissolved("run-1"), "Torque dissolves the run once the result has settled")
 }
@@ -389,7 +411,7 @@ func TestUnitTimeoutWithResultSucceeds(t *testing.T) {
 	_, err := dispatch(svc, id)
 	require.NoError(t, err)
 
-	_, _ = svc.Comment.AddForTask(id, "orchestrator", "RESULT: finished just in time")
+	_, _ = svc.Comment.AddForTask(id, "orchestrator", "RESULT run-1: finished just in time")
 	offset.Store(int64(3 * time.Hour))
 	waitStatus(t, svc, id, "review")
 	assert.True(t, fake.isDissolved("run-1"))
@@ -623,12 +645,13 @@ func TestUnitResumeReattaches(t *testing.T) {
 	t.Cleanup(svc2.Unit.Stop)
 	svc2.Unit.Resume()
 
-	_, _ = svc2.Comment.AddForTask(id, "orchestrator", "RESULT: ok")
+	_, _ = svc2.Comment.AddForTask(id, "orchestrator", "RESULT run-1: ok")
 	fake.set(func() { fake.ended = true })
 	waitStatus(t, svc2, id, "review")
 }
 
-// The dispatcher's record survives caller metadata writes, and the plan stays.
+// The dispatcher's record survives caller metadata writes, and a caller can
+// neither forge one nor change the stored one.
 func TestUnitRunProtectedFromMetadataWrites(t *testing.T) {
 	fake := newFake()
 	svc := unitSetup(t, fake, service.UnitConfig{})
@@ -636,19 +659,136 @@ func TestUnitRunProtectedFromMetadataWrites(t *testing.T) {
 	_, err := dispatch(svc, id)
 	require.NoError(t, err)
 
-	// A caller replaces the metadata wholesale, with no unit_run and then with a forged one.
-	for _, md := range []string{
-		`{"unit_plan":{"workstream_id":"ws-7","goal":"edited goal","done_when":["x"]},"note":"hi"}`,
-		`{"unit_plan":{"workstream_id":"ws-7","goal":"edited goal","done_when":["x"]},"unit_run":{"state":"done","run_id":"forged"}}`,
-	} {
-		v := unitNullStr(md)
-		require.NoError(t, svc.Task.Update(id, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{Metadata: &v}}))
-		run := unitRun(t, svc, id)
-		assert.Equal(t, "run-1", run.RunID)
-		assert.Equal(t, service.UnitActive, run.State)
-	}
+	// Replacing the metadata without unit_run keeps the stored record.
+	v := unitNullStr(`{"unit_plan":{"workstream_id":"ws-7","goal":"edited goal","done_when":["x"]},"note":"hi"}`)
+	require.NoError(t, svc.Task.Update(id, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{Metadata: &v}}))
+	assert.Equal(t, "run-1", unitRun(t, svc, id).RunID)
 	rec, _ := svc.Task.Get(id)
 	assert.Contains(t, rec.Metadata.String, "edited goal")
+
+	// Writing back what is stored is tolerated; changing it is refused.
+	forged := unitNullStr(`{"unit_plan":{"workstream_id":"ws-7","goal":"g","done_when":["x"]},"unit_run":{"state":"done","run_id":"forged"}}`)
+	err = svc.Task.Update(id, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{Metadata: &forged}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unit_run")
+	assert.Equal(t, "run-1", unitRun(t, svc, id).RunID)
+
+	// No unit_run is stored on a fresh task: it cannot be planted on create or update.
+	_, err = svc.Task.Create(service.TaskCreateInput{Title: "x", Manual: true, Metadata: map[string]any{"unit_run": map[string]any{"state": "active", "run_id": "r"}}})
+	require.Error(t, err)
+	plain, err := svc.Task.Create(service.TaskCreateInput{Title: "plain", Manual: true})
+	require.NoError(t, err)
+	err = svc.Task.Update(plain.ID, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{Metadata: &forged}})
+	require.Error(t, err)
+
+	// Even past the service check, the store strips a unit_run it does not hold.
+	raw := unitNullStr(`{"unit_run":{"state":"active"},"a":1}`)
+	require.NoError(t, svc.Store().UpdateTask(plain.ID, sqlstore.TaskUpdate{Metadata: &raw}))
+	got, _ := svc.Task.Get(plain.ID)
+	assert.NotContains(t, got.Metadata.String, "unit_run")
+}
+
+// A RESULT comment counts only if it carries the run id; anyone else's is ignored.
+func TestUnitForeignResultCommentIgnored(t *testing.T) {
+	fake := newFake()
+	svc := unitSetup(t, fake, service.UnitConfig{ResultGrace: 20 * time.Millisecond})
+	id := newUnitTask(t, svc, nil)
+	_, err := dispatch(svc, id)
+	require.NoError(t, err)
+
+	for _, c := range []string{"RESULT: looks done to me", "RESULT run-99: other run", "result run-1: wrong case"} {
+		_, _ = svc.Comment.AddForTask(id, "someone", c)
+	}
+	time.Sleep(300 * time.Millisecond)
+	rec, _ := svc.Task.Get(id)
+	assert.Equal(t, "doing", rec.Status, "foreign RESULT comments do not finish the unit")
+	assert.False(t, fake.isDissolved("run-1"))
+
+	_, _ = svc.Comment.AddForTask(id, "orchestrator", "RESULT run-1: real")
+	waitStatus(t, svc, id, "review")
+}
+
+// A formation that keeps answering 409 on the same key (or keeps failing with
+// 5xx) is not replayed forever. With the team visible in Tether's rosters it is
+// found and dissolved.
+func TestUnitPersistentFormFailureGivesUpAndDissolvesFoundTeam(t *testing.T) {
+	for name, setup := range map[string]func(*fakeTeamsAPI){
+		"409 on replay": func(f *fakeTeamsAPI) { f.replayStatus = 409 },
+		"500":           func(f *fakeTeamsAPI) { f.serverError = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := newFake()
+			fake.loseResponse = true // the first call forms a team but loses the answer
+			svc := unitSetup(t, fake, service.UnitConfig{MaxReplays: 3})
+			id := newUnitTask(t, svc, nil)
+
+			_, err := dispatch(svc, id)
+			require.Error(t, err)
+			fake.set(func() { fake.loseResponse = false; setup(fake) })
+
+			for i := 0; i < 10 && unitRun(t, svc, id).State == service.UnitForming; i++ {
+				_, err = dispatch(svc, id)
+				require.Error(t, err)
+			}
+			assert.Equal(t, service.UnitFailed, unitRun(t, svc, id).State, "gave up instead of replaying forever")
+			assert.True(t, fake.isDissolved("run-1"), "the team that was found is dissolved")
+			rec, _ := svc.Task.Get(id)
+			assert.True(t, rec.Manual)
+			assert.Equal(t, "todo", rec.Status)
+		})
+	}
+}
+
+func TestUnitGiveUpNotFoundParksUnconfirmedAndCountsAgainstLimit(t *testing.T) {
+	fake := newFake()
+	fake.serverError = true
+	fake.hideRoster = true
+	svc := unitSetup(t, fake, service.UnitConfig{MaxReplays: 2, MaxActive: 1})
+	id := newUnitTask(t, svc, nil)
+	other := newUnitTask(t, svc, nil)
+
+	for i := 0; i < 6 && unitRun(t, svc, id).State != service.UnitUnconfirmed; i++ {
+		_, err := dispatch(svc, id)
+		require.Error(t, err)
+	}
+	run := unitRun(t, svc, id)
+	require.Equal(t, service.UnitUnconfirmed, run.State)
+	assert.True(t, run.Unconfirmed)
+	rec, _ := svc.Task.Get(id)
+	assert.True(t, rec.Manual)
+	assert.Contains(t, rec.BlockedReason, "torque-unit-"+id+"-a1", "names the idempotency key")
+	n := fake.formCalls
+	_, err := dispatch(svc, id)
+	require.Error(t, err)
+	assert.Equal(t, n, fake.formCalls, "no more replays")
+
+	// It counts against the unit limit.
+	fake.set(func() { fake.serverError = false })
+	_, err = dispatch(svc, other)
+	require.ErrorIs(t, err, service.ErrUnitCapacity)
+
+	// Cleared by the operator, the task starts a new attempt.
+	res, err := svc.Unit.Dispatch(context.Background(), service.UnitDispatchInput{TaskID: id, ClearUnconfirmed: true})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.Attempt)
+}
+
+func TestUnitGiveUpByAge(t *testing.T) {
+	fake := newFake()
+	fake.serverError = true
+	fake.hideRoster = true
+	svc := unitSetup(t, fake, service.UnitConfig{MaxReplays: 100, FormingGiveUp: time.Minute})
+	var offset atomic.Int64
+	svc.Unit.SetClock(func() time.Time { return time.Now().Add(time.Duration(offset.Load())) })
+	id := newUnitTask(t, svc, nil)
+	_, err := dispatch(svc, id)
+	require.Error(t, err)
+	require.Equal(t, service.UnitForming, unitRun(t, svc, id).State)
+
+	offset.Store(int64(time.Hour))
+	_, err = dispatch(svc, id)
+	require.Error(t, err)
+	assert.Equal(t, service.UnitUnconfirmed, unitRun(t, svc, id).State)
 }
 
 func TestUnitPlanValidatedOnTaskWrites(t *testing.T) {

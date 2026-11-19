@@ -275,7 +275,7 @@ func (p Plan) TimeoutDuration(def time.Duration) time.Duration {
 }
 
 // Brief renders the orchestrator's brief for a task.
-func (p Plan) Brief(taskID, title string) string {
+func (p Plan) Brief(taskID, title, runID string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "UNIT OF WORK %s: %s\n", taskID, title)
 	fmt.Fprintf(&b, "Torque task: %s\nWorkstream: %s\n\n", taskID, p.WorkstreamID)
@@ -304,8 +304,9 @@ HOW TO RUN
 - You are the orchestrator. Workers and the reviewer talk only to you; you own status and upward communication.
 - Do not message anyone else unless blocked. No acknowledgement or status chatter.
 - Record progress and the final result on Torque task %s (torque_comment_add).
-- When done, FIRST add a Torque comment on %s whose text starts with "RESULT:" and states outcome, PR links and evidence, THEN call tether_team_report_result. Reporting ends the run and stops every member.
-`, taskID, taskID)
+- When done, FIRST add a Torque comment on %s whose text starts exactly with "RESULT %s:" (your team run id is part of the marker; Torque ignores any other RESULT comment) and states outcome, PR links and evidence, THEN call tether_team_report_result. Reporting ends the run and stops every member.
+- The reviewer merges (on green CI) before you report; merging is part of the protocol, not something Torque checks.
+`, taskID, taskID, runID)
 	return b.String()
 }
 

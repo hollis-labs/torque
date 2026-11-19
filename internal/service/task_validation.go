@@ -580,3 +580,22 @@ func validateUnitPlanMetadata(metadata map[string]any) error {
 	}
 	return nil
 }
+
+// rejectUnitRunWrite refuses metadata that carries a unit_run record. The key
+// belongs to the unit-of-work dispatcher, which writes it through its own path;
+// generic task writes may only echo back the value already stored (a client
+// that reads a task and writes its metadata back unchanged).
+func rejectUnitRunWrite(incoming map[string]any, stored map[string]any) error {
+	raw, ok := incoming[UnitRunKey]
+	if !ok {
+		return nil
+	}
+	if cur, has := stored[UnitRunKey]; has {
+		a, _ := json.Marshal(raw)
+		b, _ := json.Marshal(cur)
+		if string(a) == string(b) {
+			return nil
+		}
+	}
+	return &ValidationError{Field: "metadata." + UnitRunKey, Message: "unit_run is written only by the unit dispatcher (torque_unit_dispatch); remove it from the metadata"}
+}

@@ -406,6 +406,9 @@ func (s *TaskService) Create(input TaskCreateInput) (*sqlstore.TaskRecord, error
 	if err := validateUnitPlanMetadata(input.Metadata); err != nil {
 		return nil, err
 	}
+	if err := rejectUnitRunWrite(input.Metadata, nil); err != nil {
+		return nil, err
+	}
 
 	// Service-level safety enforcement for CW-20260417-0133. Promoted from
 	// audit-only to FORCE after Template.Instantiate was identified as a
@@ -763,6 +766,9 @@ func (s *TaskService) Update(id string, input TaskUpdateInput) error {
 	if input.Metadata != nil && input.Metadata.Valid && input.Metadata.String != "" {
 		overlay := map[string]any{}
 		if err := unmarshalJSON([]byte(input.Metadata.String), &overlay); err == nil {
+			if err := rejectUnitRunWrite(overlay, effectiveMetadata); err != nil {
+				return err
+			}
 			for k, v := range overlay {
 				effectiveMetadata[k] = v
 			}
