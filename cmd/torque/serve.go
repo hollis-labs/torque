@@ -252,6 +252,19 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 		sched.SetSessionStopper(tc.StopSession)
 		log.Printf("[serve] workstream claims consult Tether at %s", tc.BaseURL)
 	}
+	// Unit-of-work dispatch: forms a Tether team per task that carries an
+	// execution plan, with the local operator's credential over the daemon's
+	// unix socket. Needs both TORQUE_TETHER_URL and TORQUE_TETHER_OPERATOR_TOKEN;
+	// without them torque_unit_dispatch reports it is not configured.
+	if uc := tetherclient.New(os.Getenv("TORQUE_TETHER_URL"), os.Getenv("TORQUE_TETHER_OPERATOR_TOKEN")); uc != nil && os.Getenv("TORQUE_TETHER_OPERATOR_TOKEN") != "" {
+		uc.HTTP.Timeout = 90 * time.Second // forming a team launches several sessions
+		svc.Unit.Configure(uc, service.UnitConfigFromEnv())
+		sched.SetUnitDispatcher(svc.Unit.DispatchTask)
+		svc.Unit.SetNotifier(func(taskID, reason string) {
+			sched.EventBus().Publish(scheduler.SchedulerEvent{Type: "task.notify", TaskID: taskID, Data: map[string]interface{}{"reason": reason}})
+		})
+		log.Printf("[serve] unit-of-work dispatch forms teams through Tether at %s", uc.BaseURL)
+	}
 	stateWriter := writeq.New(store, writeq.Options{})
 	sched.SetStateWriter(stateWriter)
 	writerCtx, writerCancel := context.WithCancel(context.Background())
@@ -559,6 +572,13 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	go func() {
 		defer wg.Done()
 		sweepWorkstreamClaims(runCtx, svc.Workstream, time.Minute)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		svc.Unit.Resume()
+		<-runCtx.Done()
+		svc.Unit.Stop()
 	}()
 
 	// Federation mTLS listener (CW-20260518-0048, ADR-0002 §5): a dedicated

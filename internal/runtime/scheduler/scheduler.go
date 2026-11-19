@@ -61,7 +61,8 @@ type SchedulerStatus struct {
 // dispatches them to executors via a worker pool, and handles results
 // through the lifecycle manager.
 type Scheduler struct {
-	sessionStopper func(ctx context.Context, tetherSessionID string) error // optional; see SetSessionStopper
+	unitDispatch   func(ctx context.Context, task sqlstore.TaskRecord) (bool, error) // optional; see SetUnitDispatcher
+	sessionStopper func(ctx context.Context, tetherSessionID string) error           // optional; see SetSessionStopper
 	// unresolvedProfiles remembers, for unresolvedProfileTTL, the task
 	// profiles that resolved to no provider (TaskProfile -> expiry), so cost
 	// resolution does not re-log config's "profile not found" warning on every
@@ -223,6 +224,13 @@ func New(
 	})
 
 	return s
+}
+
+// SetUnitDispatcher routes picked tasks that carry an execution plan to fn
+// (the Tether team dispatcher). fn reports whether it handled the task; an
+// unhandled task takes the normal executor path. nil disables the hook.
+func (s *Scheduler) SetUnitDispatcher(fn func(ctx context.Context, task sqlstore.TaskRecord) (bool, error)) {
+	s.unitDispatch = fn
 }
 
 // SetSessionStopper installs the best-effort hook orphan recovery uses to
@@ -456,6 +464,18 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 				log.Printf("[scheduler] wait dispatch %s: %v", task.ID, err)
 			}
 			continue
+		}
+		if s.unitDispatch != nil {
+			// A unit of work (a task with an execution plan) launches as a Tether
+			// team, not through an executor. A failure leaves the task todo,
+			// manual and annotated, so the next tick does not pick it again.
+			handled, err := s.unitDispatch(ctx, task)
+			if handled {
+				if err != nil {
+					log.Printf("[scheduler] unit dispatch %s: %v", task.ID, err)
+				}
+				continue
+			}
 		}
 		if err := s.dispatchTask(ctx, task); err != nil {
 			log.Printf("[scheduler] failed to dispatch %s: %v", task.ID, err)

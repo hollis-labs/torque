@@ -33,6 +33,7 @@ type Service struct {
 	Workstream *WorkstreamService
 	Forums     *ForumsService
 	Judge      *JudgeService
+	Unit       *UnitService
 
 	// Models is the shared models.dev catalog. nil in test wiring; populated
 	// by serve / mcp entry points. Callers that depend on model metadata
@@ -51,13 +52,15 @@ func New(store *sqlstore.Store) *Service {
 	task := &TaskService{store: store, feature: feature, tags: tag}
 	judgeSvc := &JudgeService{store: store, tags: tag, feature: feature}
 	task.afterCreate = judgeSvc.EnrichOnCreate
+	comment := &CommentService{store: store, writer: writequeue.NewDirect(store)}
 	return &Service{
 		store:      store,
+		Unit:       newUnitService(store, task, comment),
 		Task:       task,
 		Workstream: &WorkstreamService{store: store, task: task},
 		Run:        &RunService{store: store},
 		Artifact:   &ArtifactService{store: store},
-		Comment:    &CommentService{store: store, writer: writequeue.NewDirect(store)},
+		Comment:    comment,
 		Settings:   &SettingsService{store: store},
 		Feature:    feature,
 		Sprint:     &SprintService{store: store, feature: feature, task: task},

@@ -10,6 +10,7 @@ Start with:
 - [overview.md](overview.md) — what Torque is and what it is not
 - [getting-started.md](getting-started.md) — how to run the server and MCP locally
 - [runtime.md](runtime.md) — storage, scheduler, executors, and feature flags
+- [unit-of-work.md](unit-of-work.md) — execution-plan contract and dispatching a task as a Tether team
 - [surfaces.md](surfaces.md) — the current HTTP and MCP surfaces at a high level
 - [api-pagination.md](api-pagination.md) — shared HTTP/MCP list target contract, endpoint matrix, and S1 reconciliation status
 - [mcp-tools-reference.md](mcp-tools-reference.md) — per-tool index and shared conventions (envelope, pagination, sort, bulk) for the Task/Subtodo/Comment/Project/Epic/Sprint/Issue/Plan MCP tools

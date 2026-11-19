@@ -215,3 +215,18 @@ func TestConfigFromEnv(t *testing.T) {
 	assert.Equal(t, 9999, cfg.HTTPPort)
 	assert.Equal(t, "postgres://localhost/torque", cfg.PostgresDSN)
 }
+
+func TestSchedulerMaxPerProjectDefault(t *testing.T) {
+	t.Setenv("TORQUE_SCHED_MAX_PER_PROJECT", "")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scheduler.MaxPerProject != 6 {
+		t.Fatalf("default per-project cap = %d, want 6", cfg.Scheduler.MaxPerProject)
+	}
+	t.Setenv("TORQUE_SCHED_MAX_PER_PROJECT", "3")
+	if cfg, _ = config.Load(); cfg.Scheduler.MaxPerProject != 3 {
+		t.Fatalf("env override = %d, want 3", cfg.Scheduler.MaxPerProject)
+	}
+}

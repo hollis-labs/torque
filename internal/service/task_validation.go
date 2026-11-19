@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/torque/internal/unitplan"
 	"slices"
 	"strings"
 
@@ -565,4 +566,36 @@ func validateQualityGatesJSON(ns *sql.NullString) error {
 		return &ValidationError{Field: "quality_gates", Message: "quality_gates must be a JSON array of gate names"}
 	}
 	return validateQualityGates(gates)
+}
+
+// validateUnitPlanMetadata refuses a malformed execution plan
+// (metadata.unit_plan) at write time, so an invalid shape never reaches
+// dispatch. A task without a plan is untouched.
+func validateUnitPlanMetadata(metadata map[string]any) error {
+	if !unitplan.Present(metadata) {
+		return nil
+	}
+	if _, err := unitplan.FromMetadata(metadata); err != nil {
+		return &ValidationError{Field: "metadata.unit_plan", Message: err.Error()}
+	}
+	return nil
+}
+
+// rejectUnitRunWrite refuses metadata that carries a unit_run record. The key
+// belongs to the unit-of-work dispatcher, which writes it through its own path;
+// generic task writes may only echo back the value already stored (a client
+// that reads a task and writes its metadata back unchanged).
+func rejectUnitRunWrite(incoming map[string]any, stored map[string]any) error {
+	raw, ok := incoming[UnitRunKey]
+	if !ok {
+		return nil
+	}
+	if cur, has := stored[UnitRunKey]; has {
+		a, _ := json.Marshal(raw)
+		b, _ := json.Marshal(cur)
+		if string(a) == string(b) {
+			return nil
+		}
+	}
+	return &ValidationError{Field: "metadata." + UnitRunKey, Message: "unit_run is written only by the unit dispatcher (torque_unit_dispatch); remove it from the metadata"}
 }

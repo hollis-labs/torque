@@ -56,7 +56,7 @@ Important env vars:
 - `TORQUE_SCHED_WORKERS` (global cap on concurrent task runs across all projects; default 3)
 - `TORQUE_SCHED_INTERVAL`
 - `TORQUE_SCHED_ENABLED`
-- `TORQUE_SCHED_MAX_PER_PROJECT` (max concurrent `doing` tasks per project; default 1; values below 1 fall back to 1)
+- `TORQUE_SCHED_MAX_PER_PROJECT` (max concurrent `doing` tasks per project; default 6, raised from 1 deliberately and applying to all task kinds; values below 1 fall back to 1; the live value is set in `/var/lib/fabric/config/torque.env`)
 - `TORQUE_SCHED_STALE`
 - `TORQUE_WORKTREE_PER_RUN`
 - `TORQUE_WORKTREE_ROOT`
