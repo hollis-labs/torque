@@ -1,0 +1,35 @@
+# Reference template — commit to DB via torque_template_create.
+# Source of truth is the DB row; service.UnitOfWorkTemplate() is the same shape.
+# See docs/unit-of-work.md. auto_execute false => tasks are created manual=true;
+# approving one is setting manual=false (or calling torque_unit_dispatch).
+id: unit-of-work
+name: Unit of Work
+description: |
+  {{goal}}
+
+  Done when:
+  {{done_when}}
+
+  Launched by Torque as a Tether team (orchestrator + workers + reviewer). See the execution plan in metadata.unit_plan.
+kind: agent
+auto_execute: false
+executor: cli
+on_done: review
+on_fail: retry
+max_retries: 1
+required_vars:
+  - workstream_id
+  - goal
+  - done_when
+metadata_template:
+  unit_plan:
+    workstream_id: "{{workstream_id}}"
+    goal: "{{goal}}"
+    done_when: "{{done_when}}"
+    workers: 1
+    worker_runtime: sol
+    escalate_to: "@chief"
+    merge_policy: reviewer_merges_on_green
+    risk_tier: normal
+tags:
+  - unit-of-work

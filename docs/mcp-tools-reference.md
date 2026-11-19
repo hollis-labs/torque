@@ -794,6 +794,7 @@ HTTP equivalents: `POST /api/v1/workstreams/claim`,
 | Tool | Purpose |
 |---|---|
 | `torque_workstream_claim_next` | A free team run asks for the next cleared workstream (a `parent` task with children, `todo`, `manual=false`, dependencies `done`, no active claim). Returns `outcome` `dispatch` (claim held, task moves to `doing`), `defer` (`reason`: `paused`, `project_cap`, `no_cleared_work`) or `refuse`. Keyed on `team_run_id` (the Tether run id); the same `team_run_id` plus `idempotency_key` returns the same claim. Needs the serve-process scheduler for go/pause; stdio MCP clients use the HTTP route. |
+| `torque_unit_dispatch` | Dispatches a unit of work: forms a Tether team (1 orchestrator, 1-3 workers, 1 reviewer) for a task with an execution plan (`metadata.unit_plan`), briefs the orchestrator, records the run on the task and moves it to `doing`; Torque then tracks the run and moves the task to `review` with the result, or `blocked` with the reason. Idempotent (a live run is returned with `reused`). Works with the scheduler on or off; stdio MCP is proxied to `POST /api/v1/units/dispatch`. See [unit-of-work.md](unit-of-work.md). |
 | `torque_workstream_heartbeat` | Extends the claim's lease (default 15 minutes). Torque never reclaims on silence alone. |
 | `torque_workstream_release` | Ends a claim: `completed` (asks for `done`, so it passes the landing gate; missing evidence leaves the task `blocked` and escalated, with the refusal in `reason`), `failed` (task `blocked`), `canceled`/`handoff` (task back to `todo`). |
 

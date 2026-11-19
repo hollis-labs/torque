@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- **Dispatch a unit of work as a Tether team, and the execution-plan contract** (CW-20261118-0047, CW-20261118-0048). A task with `metadata.unit_plan` (workstream id, goal, done-when, scope, slices, worker count and runtime, escalation target, evidence, merge policy, release/deploy, risk tier) is validated on every write and launched by Torque, no agent involved, as a 3-5 agent team: Astra orchestrator and reviewer, 1-3 Sol or Agy workers. `torque_unit_dispatch` and `POST /api/v1/units/dispatch` dispatch one on demand, and the scheduler hands picked plan tasks to the same dispatcher when enabled. Dispatch forms the team with the Tether operator token (idempotency key from task id and attempt), briefs the orchestrator, records the run on the task (`metadata.unit_run`), moves it to `doing`, and tracks the run: a result moves the task to `review` and is posted as a comment; no result or a timeout blocks it with the reason. A formation failure leaves the task `todo`, manual, with a `blocked_reason`; a failure after the team formed dissolves the run first. Needs `TORQUE_TETHER_URL` and `TORQUE_TETHER_OPERATOR_TOKEN`; see `docs/unit-of-work.md` and the `unit-of-work` template.
+
 - **A relay from the state-event outbox to the event hub, off by default** (CW-20261020-0030). With `TORQUE_EVENTS_HUB=1` and `HOLLIS_EVENTS_URL` (and the app's token file, `HOLLIS_AUTH_TOKEN_FILE_TORQUE`) set, `torque serve` ships `event_outbox` to the hub through `mesh/eventbus` v0.2.0: in order, at least once, with the cursor kept in `event_outbox_cursors` per outbox generation and moved only over events the hub settled or the client durably quarantined. A down hub or a missing credential holds events back and loses none; a log trimmed past the cursor resumes at the trim point and logs the gap. The actor, record time and cursor are not sent (the hub owns them). SQLite only, like the SSE outbox reader. Nothing changes unless both are set; the client's spool and quarantine are under `<state dir>/events-hub`.
 - Auth settings reload without a restart (CW-20261019-0046, security/auth
   v0.2.1). An optional `auth.yaml` in the config directory sets the mode and the
@@ -126,6 +128,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `TORQUE_SCHED_MAX_PER_PROJECT` defaults to 6 (was 1). Set the live value in the service env file.
 - Adopt published Harness v0.3.1, llm-core v0.1.0, agent v0.3.0 and
   plugin-mcp v0.2.0 packages (CW-20261009-0005). Agent boot artifacts use
   canonical native rendering and the workspace engine, bound to the accepted

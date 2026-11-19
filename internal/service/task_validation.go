@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/hollis-labs/torque/internal/unitplan"
 	"slices"
 	"strings"
 
@@ -565,4 +566,17 @@ func validateQualityGatesJSON(ns *sql.NullString) error {
 		return &ValidationError{Field: "quality_gates", Message: "quality_gates must be a JSON array of gate names"}
 	}
 	return validateQualityGates(gates)
+}
+
+// validateUnitPlanMetadata refuses a malformed execution plan
+// (metadata.unit_plan) at write time, so an invalid shape never reaches
+// dispatch. A task without a plan is untouched.
+func validateUnitPlanMetadata(metadata map[string]any) error {
+	if !unitplan.Present(metadata) {
+		return nil
+	}
+	if _, err := unitplan.FromMetadata(metadata); err != nil {
+		return &ValidationError{Field: "metadata.unit_plan", Message: err.Error()}
+	}
+	return nil
 }

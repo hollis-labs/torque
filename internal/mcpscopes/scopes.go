@@ -159,6 +159,7 @@ var Tools = map[string]string{
 	"torque_template_get":              read,
 	"torque_template_list":             read,
 	"torque_template_update":           write,
+	"torque_unit_dispatch":             write,
 	"torque_workstream_claim_next":     write,
 	"torque_workstream_heartbeat":      write,
 	"torque_workstream_release":        write,

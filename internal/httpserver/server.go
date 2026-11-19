@@ -283,6 +283,9 @@ func (s *Server) routes() {
 		r.Post("/workstreams/claims/{id}/heartbeat", s.heartbeatWorkstreamClaim)
 		r.Post("/workstreams/claims/{id}/release", s.releaseWorkstreamClaim)
 
+		// Units of work — dispatch a task with an execution plan as a Tether team.
+		r.Post("/units/dispatch", s.dispatchUnit)
+
 		// Sessions — long-lived agent sessions (sessionmgr).
 		r.Get("/sessions", s.listSessions)
 		r.Post("/sessions/launch", s.launchSession)

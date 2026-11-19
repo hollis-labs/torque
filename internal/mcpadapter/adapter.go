@@ -343,6 +343,7 @@ Example: {}`),
 	a.registerSettingsTools()
 	a.registerSchedulerTools()
 	a.registerWorkstreamTools()
+	a.registerUnitTools()
 	a.registerCheckpointTools()
 	a.registerSelfReportTools()
 	a.registerTemplateTools()

@@ -59,3 +59,12 @@ func TestWorkstreamClaimsList(t *testing.T) {
 	defer bad.Body.Close()
 	assert.Equal(t, http.StatusBadRequest, bad.StatusCode)
 }
+
+// Without a Tether operator credential the unit dispatcher is unconfigured and
+// says so; a missing task_id is a field error.
+func TestUnitDispatch_UnconfiguredAndInvalid(t *testing.T) {
+	ts := setupTestServer(t)
+	resp, out := postJSON(t, ts.URL+"/api/v1/units/dispatch", map[string]any{"task_id": "CW-X"})
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, out["error"], "TORQUE_TETHER_OPERATOR_TOKEN")
+}

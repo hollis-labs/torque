@@ -148,6 +148,7 @@ var toolAnnotations = map[string]toolHints{
 	"torque_task_summary":              {false, false, false},
 	"torque_task_transition":           {false, false, true},
 	"torque_task_update":               {false, false, true},
+	"torque_unit_dispatch":             {false, false, true},
 	"torque_workstream_claim_next":     {false, false, true},
 	"torque_workstream_heartbeat":      {false, false, true},
 	"torque_workstream_release":        {false, false, false},
