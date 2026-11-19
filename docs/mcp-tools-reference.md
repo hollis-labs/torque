@@ -615,8 +615,8 @@ Source: `internal/mcpadapter/project_tools.go`.
 
 | Tool | Purpose |
 |---|---|
-| `torque_project_create` | Create. Optional `status` is exactly `active` or `inactive`; omission defaults to `active`. `repo_path` must resolve to an existing directory (`~` expands) — a missing path is `error.code=arg_invalid, field=repo_path`. |
-| `torque_project_get` | Fetch by id. |
+| `torque_project_create` | Create. Optional `external_authority` + `external_id` must both be non-empty and form a unique identity. Referenced creates return the full record plus `created`/`found` booleans; replay returns the existing ID without updates. Different `name` OR `repo_path` returns `conflict`. Without a reference, behavior and response shape are unchanged; names remain nonunique. Optional `status` is exactly `active` or `inactive`; omission defaults to `active`. `repo_path` must resolve to an existing directory (`~` expands) — a missing path is `error.code=arg_invalid, field=repo_path`. |
+| `torque_project_get` | Fetch by `id` OR the complete `external_authority` + `external_id` pair; selectors are mutually exclusive. Includes archived projects. Unknown reference returns `not_found`. |
 | `torque_project_update` | True partial patch — `repo_path` can be changed but never cleared to empty. |
 | `torque_project_list` | Filter by `status`; free-text search is **not** available on Project (no `search` param — this is the one in-scope entity without a merged search). |
 | `torque_project_delete` | Hard delete; linked tasks keep their row with `project_id` cleared. |

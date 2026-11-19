@@ -2,6 +2,7 @@ package sqlstore
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,18 +12,20 @@ import (
 // active projects; non-NULL means the project is archived (kept for
 // audit, hidden from active filters). Archiving is independent of Status.
 type ProjectRecord struct {
-	ID           string
-	Name         string
-	Description  string
-	RepoPath     string
-	AgentPath    string
-	ReadPaths    sql.NullString
-	WritePaths   sql.NullString
-	ContextPaths sql.NullString
-	Permissions  sql.NullString
-	Rules        sql.NullString
-	Status       string
-	Icon         string
+	ExternalAuthority string `json:",omitempty"`
+	ExternalID        string `json:",omitempty"`
+	ID                string
+	Name              string
+	Description       string
+	RepoPath          string
+	AgentPath         string
+	ReadPaths         sql.NullString
+	WritePaths        sql.NullString
+	ContextPaths      sql.NullString
+	Permissions       sql.NullString
+	Rules             sql.NullString
+	Status            string
+	Icon              string
 	// ExecutionDefaults is a JSON object of task defaults; see
 	// service.ProjectExecutionDefaults (CW-20261030-0208).
 	ExecutionDefaults sql.NullString
@@ -77,9 +80,9 @@ func (s *Store) CreateProject(p *ProjectRecord) error {
 		p.Status = "active"
 	}
 	_, err := s.db.Exec(`INSERT INTO projects (
-		id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, execution_defaults
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.ID, p.Name, p.Description, p.RepoPath, p.AgentPath, p.ReadPaths, p.WritePaths, p.ContextPaths, p.Permissions, p.Rules, p.Status, p.Icon, p.ExecutionDefaults,
+		id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, execution_defaults, external_authority, external_id
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Name, p.Description, p.RepoPath, p.AgentPath, p.ReadPaths, p.WritePaths, p.ContextPaths, p.Permissions, p.Rules, p.Status, p.Icon, p.ExecutionDefaults, nullableProjectReference(p.ExternalAuthority), nullableProjectReference(p.ExternalID),
 	)
 	return err
 }
@@ -87,8 +90,8 @@ func (s *Store) CreateProject(p *ProjectRecord) error {
 // GetProject fetches a single project by ID.
 func (s *Store) GetProject(id string) (*ProjectRecord, error) {
 	p := &ProjectRecord{}
-	err := s.ReadDB().QueryRow(`SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, execution_defaults, archived_at, created_at, updated_at FROM projects WHERE id = ?`, id).Scan(
-		&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.ExecutionDefaults, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt,
+	err := s.ReadDB().QueryRow(`SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, execution_defaults, archived_at, created_at, updated_at, COALESCE(external_authority, ''), COALESCE(external_id, '') FROM projects WHERE id = ?`, id).Scan(
+		&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.ExecutionDefaults, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt, &p.ExternalAuthority, &p.ExternalID,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("project %s not found", id)
@@ -136,7 +139,7 @@ func projectCursorArg(sortBy, sv string) (any, error) {
 // ListTasks for the reference implementation this mirrors. Archived rows
 // (archived_at IS NOT NULL) are excluded unless f.IncludeArchived is true.
 func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
-	query := `SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, execution_defaults, archived_at, created_at, updated_at FROM projects`
+	query := `SELECT id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, execution_defaults, archived_at, created_at, updated_at, COALESCE(external_authority, ''), COALESCE(external_id, '') FROM projects`
 
 	conditions, args := projectListPredicates(f)
 
@@ -193,7 +196,7 @@ func (s *Store) ListProjects(f ProjectFilter) ([]ProjectRecord, error) {
 	var projects []ProjectRecord
 	for rows.Next() {
 		var p ProjectRecord
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.ExecutionDefaults, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.RepoPath, &p.AgentPath, &p.ReadPaths, &p.WritePaths, &p.ContextPaths, &p.Permissions, &p.Rules, &p.Status, &p.Icon, &p.ExecutionDefaults, &p.ArchivedAt, &p.CreatedAt, &p.UpdatedAt, &p.ExternalAuthority, &p.ExternalID); err != nil {
 			return nil, err
 		}
 		projects = append(projects, p)
@@ -393,4 +396,74 @@ func projectListPredicates(f ProjectFilter) ([]string, []any) {
 func (s *Store) CountProjects(f ProjectFilter) (int, error) {
 	where, args := projectListPredicates(f)
 	return s.countFiltered("projects", where, args)
+}
+
+// ErrProjectReferenceConflict means the reference already identifies different metadata.
+var ErrProjectReferenceConflict = errors.New("project external reference conflicts with name or repo_path")
+
+func nullableProjectReference(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
+}
+
+// GetProjectByReference includes archived projects, just like GetProject by ID.
+func (s *Store) GetProjectByReference(authority, externalID string) (*ProjectRecord, error) {
+	var id string
+	err := s.ReadDB().QueryRow("SELECT id FROM projects WHERE external_authority = ? AND external_id = ?", authority, externalID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("project external reference %s/%s not found: %w", authority, externalID, sql.ErrNoRows)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.GetProject(id)
+}
+
+// CreateProjectByReference serializes allocation and insertion in the existing writer
+// transaction. The unique index is the final arbiter across independent handles.
+// The no-reference path deliberately retains its existing behavior.
+func (s *Store) CreateProjectByReference(p *ProjectRecord) (*ProjectRecord, bool, error) {
+	if strings.TrimSpace(p.ExternalAuthority) == "" || strings.TrimSpace(p.ExternalID) == "" {
+		return nil, false, fmt.Errorf("external_authority and external_id are required")
+	}
+	tx, err := s.beginWriteTx()
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+	prefix := "PRJ-" + time.Now().Format("20060102") + "-"
+	var maxSeq int
+	if err := tx.QueryRow("SELECT COALESCE(MAX(CAST(SUBSTR(id, ?) AS INTEGER)), 0) FROM projects WHERE id LIKE ?", len(prefix)+1, prefix+"%").Scan(&maxSeq); err != nil {
+		return nil, false, err
+	}
+	p.ID = fmt.Sprintf("%s%04d", prefix, maxSeq+1)
+	if p.Status == "" {
+		p.Status = "active"
+	}
+	result, err := tx.Exec(`INSERT INTO projects
+ (id, name, description, repo_path, agent_path, read_paths, write_paths, context_paths, permissions, rules, status, icon, execution_defaults, external_authority, external_id)
+ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ ON CONFLICT (external_authority, external_id) WHERE external_authority IS NOT NULL DO NOTHING`,
+		p.ID, p.Name, p.Description, p.RepoPath, p.AgentPath, p.ReadPaths, p.WritePaths, p.ContextPaths, p.Permissions, p.Rules, p.Status, p.Icon, p.ExecutionDefaults, p.ExternalAuthority, p.ExternalID)
+	if err != nil {
+		return nil, false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	var id, name, repo string
+	if err := tx.QueryRow("SELECT id, name, repo_path FROM projects WHERE external_authority = ? AND external_id = ?", p.ExternalAuthority, p.ExternalID).Scan(&id, &name, &repo); err != nil {
+		return nil, false, err
+	}
+	if name != p.Name || repo != p.RepoPath {
+		return nil, false, ErrProjectReferenceConflict
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	record, err := s.GetProject(id)
+	return record, n == 1, err
 }
