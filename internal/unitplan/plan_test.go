@@ -1,6 +1,8 @@
 package unitplan_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -66,5 +68,48 @@ func TestBriefCarriesTheContract(t *testing.T) {
 	b := p.Brief("CW-1", "Title", "run-77")
 	for _, want := range []string{"CW-1", "ws-9", "do X", "X works", "billing", "CI link", "@chief", "RESULT run-77:", "tether_team_report_result"} {
 		assert.True(t, strings.Contains(b, want), "brief missing %q", want)
+	}
+}
+
+func TestBriefTeamGuidance(t *testing.T) {
+	for _, workers := range []int{1, 2, 3} {
+		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			p, err := unitplan.Parse([]byte(fmt.Sprintf(`{"workstream_id":"ws","goal":"g","done_when":["done"],"workers":%d}`, workers)))
+			require.NoError(t, err)
+			brief := p.Brief("CW-1", "Routing", "run-77")
+			for _, want := range []string{"@workers (plural even with one worker)", "@reviewer", "Both tools require a non-empty body", "caller-scoped idempotency key", "answers with tether_team_report_result", "sends a plain message", "Do not guess member names or use @all for discovery", "GET /teams/roster?run_id=<run_id>", "HOLLIS_AUTH_TOKEN_FILE_TETHER", "Neither messaging tool is a roster-read operation", "Discovery does not grant permission"} {
+				assert.Contains(t, brief, want)
+			}
+			assert.NotContains(t, brief, "tether team ls")
+			examples := map[string]string{"tether_team_delegate": "@workers", "tether_team_address": "@reviewer"}
+			keys := map[string]bool{}
+			for _, line := range strings.Split(brief, "\n") {
+				fields := strings.SplitN(strings.TrimSpace(line), " ", 2)
+				address, ok := examples[fields[0]]
+				if !ok {
+					continue
+				}
+				require.Len(t, fields, 2)
+				var payload struct {
+					Key     string `json:"key"`
+					Request struct {
+						RunID   string `json:"run_id"`
+						Address string `json:"address"`
+						Body    string `json:"body"`
+					} `json:"request"`
+				}
+				decoder := json.NewDecoder(strings.NewReader(fields[1]))
+				decoder.DisallowUnknownFields()
+				require.NoError(t, decoder.Decode(&payload))
+				assert.Equal(t, "run-77", payload.Request.RunID)
+				assert.Equal(t, address, payload.Request.Address)
+				assert.NotEmpty(t, payload.Request.Body)
+				require.NotEmpty(t, payload.Key)
+				assert.False(t, keys[payload.Key], "each distinct operation needs a distinct key")
+				keys[payload.Key] = true
+				delete(examples, fields[0])
+			}
+			assert.Empty(t, examples, "both tool examples must be present")
+		})
 	}
 }

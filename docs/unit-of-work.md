@@ -19,6 +19,80 @@ Models come from the launch each slot's definition pin resolves to in Tether's
 `teams-policy.yaml`. Torque only picks the pin. Default pins are in
 `service.DefaultUnitPins`; override with `TORQUE_UNIT_PINS` (JSON).
 
+## Brief routing guidance
+
+Every generated brief names `@workers` (plural even with one worker) and
+`@reviewer`. Both `tether_team_delegate` and `tether_team_address` require a
+non-empty `body` and a caller-scoped idempotency `key`:
+
+```json
+{"key":"<run_id>-implementation-v1","request":{"run_id":"<run_id>","address":"@workers","body":"Implement the assigned slice and report the result."}}
+```
+
+Use this shape with `tether_team_delegate` to hand off work whose recipient
+answers with `tether_team_report_result`. For a plain message, use
+`tether_team_address` with its own key, address and body. Retry the same unchanged
+request with the same key; a new request needs a new key. Neither tool is a
+read-only roster operation. Do not guess member names or use `@all` for discovery.
+
+### Read-only roster discovery
+
+Use authenticated `GET /teams/roster?run_id=<run_id>` for the supplied team run ID.
+This route was verified on agent-os with an existing session credential: HTTP
+200, `runs[].roster_version` and `runs[].members` containing canonical `slot`,
+`id`, `actor`, `status` and `kind` fields. The example uses the verified agent-os
+daemon socket; other environments must use their configured daemon endpoint.
+It reads the existing session credential into memory and never prints it or
+passes it in command arguments. Do not substitute operator credentials.
+
+Replace `<run_id>` with the team run ID supplied in the brief:
+
+```bash
+python3 - <<'PYTHON'
+import http.client
+import json
+import os
+import socket
+from pathlib import Path
+from urllib.parse import urlencode
+
+run_id = "<run_id>"
+socket_path = "/var/lib/fabric/tether/run/tetherd.sock"
+
+class UnixHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(10)
+        self.sock.connect(socket_path)
+
+token = Path(os.environ["HOLLIS_AUTH_TOKEN_FILE_TETHER"]).read_text().strip()
+connection = UnixHTTPConnection("localhost")
+try:
+    connection.request(
+        "GET",
+        "/teams/roster?" + urlencode({"run_id": run_id}),
+        headers={"Authorization": "Bearer " + token},
+    )
+    response = connection.getresponse()
+    if response.status != 200:
+        raise SystemExit(f"Roster request failed: HTTP {response.status}")
+    payload = json.load(response)
+    for roster in payload["runs"]:
+        print("run", roster["run"]["id"], "roster_version", roster["roster_version"])
+        for member in roster["members"]:
+            print(member["slot"], member["id"], member["actor"],
+                  member["status"], member["kind"], sep="\t")
+finally:
+    connection.close()
+PYTHON
+```
+
+A discovered member is not automatically an authorized messaging target.
+Continue to use the brief's canonical addresses and unchanged routing grants.
+If the configured endpoint or session credential is unavailable, use the known
+slot addresses for assigned work and report the discovery limitation; do not
+probe guessed names or broaden permissions.
+
 ## The execution plan
 
 Stored on the task as `metadata.unit_plan`, validated on every task create and

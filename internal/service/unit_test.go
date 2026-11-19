@@ -819,3 +819,28 @@ func TestUnitTemplateCreatesValidTask(t *testing.T) {
 }
 
 func unitNullStr(s string) sql.NullString { return sql.NullString{String: s, Valid: true} }
+
+// Brief addresses must resolve to the slots actually sent to Tether, including
+// pooled workers. This exercises the public dispatch boundary, not a copied roster.
+func TestUnitBriefAddressesMatchDefinition(t *testing.T) {
+	for _, workers := range []int{1, 2, 3} {
+		t.Run(fmt.Sprintf("workers_%d", workers), func(t *testing.T) {
+			fake := newFake()
+			svc := unitSetup(t, fake, service.UnitConfig{WorkerPool: []string{"msg://agent/local/w-a", "msg://agent/local/w-b", "msg://agent/local/w-c"}})
+			id := newUnitTask(t, svc, map[string]any{"workers": workers})
+			_, err := dispatch(svc, id)
+			require.NoError(t, err)
+			require.Len(t, fake.forms, 1)
+			require.Len(t, fake.delegations, 1)
+			slots := map[string]bool{}
+			for _, raw := range fake.forms[0].Team["slots"].([]any) {
+				slots[raw.(map[string]any)["name"].(string)] = true
+			}
+			for _, slot := range []string{"workers", "reviewer"} {
+				assert.True(t, slots[slot], "brief address must name a defined slot")
+				assert.Contains(t, fake.delegations[0]["body"], "@"+slot)
+			}
+			assert.Equal(t, workers, fake.forms[0].Launch.Counts["workers"])
+		})
+	}
+}
