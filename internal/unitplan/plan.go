@@ -299,6 +299,25 @@ func (p Plan) Brief(taskID, title, runID string) string {
 	}
 	fmt.Fprintf(&b, "\nMERGE POLICY: %s\nRELEASE: %t  DEPLOY: %t  RISK: %s\n", p.MergePolicy, bool(p.Release), bool(p.Deploy), p.RiskTier)
 	fmt.Fprintf(&b, "ESCALATION: only if blocked, to %s.\n", p.EscalateTo)
+	b.WriteString(`
+TEAM ADDRESSES AND TOOLS
+- Address workers as @workers (plural even with one worker) and the reviewer as @reviewer. Do not guess member names or use @all for discovery.
+- tether_team_delegate hands work to a member, who answers with tether_team_report_result. tether_team_address sends a plain message; it does not create a result obligation.
+- Both tools require a non-empty body and a caller-scoped idempotency key. Reuse the same key only when retrying the same unchanged request.
+`)
+	for _, example := range []struct{ tool, address, key, body string }{
+		{"tether_team_delegate", "@workers", "implementation-v1", "Implement the assigned slice and report the result."},
+		{"tether_team_address", "@reviewer", "review-context-v1", "The PR and test evidence will follow for review."},
+	} {
+		payload, _ := json.Marshal(map[string]any{
+			"key":     runID + "-" + example.key,
+			"request": map[string]string{"run_id": runID, "address": example.address, "body": example.body},
+		})
+		fmt.Fprintf(&b, "  %s %s\n", example.tool, payload)
+	}
+	b.WriteString(`- For read-only roster discovery, GET /teams/roster?run_id=<run_id> using the supplied team run ID and your existing session credential. On agent-os the verified daemon socket is /var/lib/fabric/tether/run/tetherd.sock and the credential file is HOLLIS_AUTH_TOKEN_FILE_TETHER. See docs/unit-of-work.md#read-only-roster-discovery for an executable example that keeps the credential out of output and argv.
+- Neither messaging tool is a roster-read operation. Discovery does not grant permission to message every returned member; keep the team's routing grants unchanged.
+`)
 	fmt.Fprintf(&b, `
 HOW TO RUN
 - You are the orchestrator. Workers and the reviewer talk only to you; you own status and upward communication.
