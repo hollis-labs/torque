@@ -2,6 +2,8 @@ package service
 
 import (
 	"database/sql"
+	"errors"
+	"strings"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
@@ -15,17 +17,19 @@ type ProjectService struct {
 
 // ProjectCreateInput holds user-facing fields for creating a project.
 type ProjectCreateInput struct {
-	Name         string
-	Description  string
-	RepoPath     string
-	AgentPath    string
-	ReadPaths    []string
-	WritePaths   []string
-	ContextPaths []string
-	Permissions  map[string]string
-	Rules        []string
-	Icon         string
-	Status       *string
+	ExternalAuthority string
+	ExternalID        string
+	Name              string
+	Description       string
+	RepoPath          string
+	AgentPath         string
+	ReadPaths         []string
+	WritePaths        []string
+	ContextPaths      []string
+	Permissions       map[string]string
+	Rules             []string
+	Icon              string
+	Status            *string
 	// ExecutionDefaults is a JSON object; see ProjectExecutionDefaults.
 	ExecutionDefaults string
 }
@@ -42,10 +46,43 @@ type ProjectArtifactCreateInput struct {
 	Metadata    map[string]any
 }
 
-// Create validates and creates a new project.
+// ProjectCreateResult embeds the unchanged record and reports reference replay outcome.
+type ProjectCreateResult struct {
+	*sqlstore.ProjectRecord
+	Created bool `json:"created"`
+	Found   bool `json:"found"`
+}
+
+// Create keeps the original record return contract for existing callers.
 func (s *ProjectService) Create(input ProjectCreateInput) (*sqlstore.ProjectRecord, error) {
+	result, err := s.CreateWithResult(input)
+	if err != nil {
+		return nil, err
+	}
+	return result.ProjectRecord, nil
+}
+
+// CreateWithResult creates a project or resolves a matching external reference.
+func (s *ProjectService) CreateWithResult(input ProjectCreateInput) (*ProjectCreateResult, error) {
 	if err := s.feature.Require("projects"); err != nil {
 		return nil, err
+	}
+	if err := validateProjectReference(input.ExternalAuthority, input.ExternalID); err != nil {
+		return nil, err
+	}
+	// Resolve replays before validating creation-only fields: a retry does not
+	// update metadata, and a once-valid repository may since have moved.
+	if input.ExternalAuthority != "" {
+		existing, err := s.store.GetProjectByReference(input.ExternalAuthority, input.ExternalID)
+		if err == nil {
+			if existing.Name != input.Name || existing.RepoPath != input.RepoPath {
+				return nil, &ConflictError{Message: sqlstore.ErrProjectReferenceConflict.Error()}
+			}
+			return &ProjectCreateResult{ProjectRecord: existing, Found: true}, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
 	}
 	if input.Name == "" {
 		return nil, &ValidationError{Field: "name", Message: "name is required"}
@@ -74,19 +111,25 @@ func (s *ProjectService) Create(input ProjectCreateInput) (*sqlstore.ProjectReco
 		status = *input.Status
 	}
 
-	id, err := s.store.NextProjectID()
-	if err != nil {
-		return nil, err
+	var id string
+	if input.ExternalAuthority == "" {
+		var err error
+		id, err = s.store.NextProjectID()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	record := &sqlstore.ProjectRecord{
-		ID:          id,
-		Name:        input.Name,
-		Description: input.Description,
-		RepoPath:    input.RepoPath,
-		AgentPath:   input.AgentPath,
-		Icon:        input.Icon,
-		Status:      status,
+		ExternalAuthority: input.ExternalAuthority,
+		ExternalID:        input.ExternalID,
+		ID:                id,
+		Name:              input.Name,
+		Description:       input.Description,
+		RepoPath:          input.RepoPath,
+		AgentPath:         input.AgentPath,
+		Icon:              input.Icon,
+		Status:            status,
 
 		ExecutionDefaults: execDefaults,
 	}
@@ -106,11 +149,25 @@ func (s *ProjectService) Create(input ProjectCreateInput) (*sqlstore.ProjectReco
 		record.Rules = sql.NullString{String: marshalJSON(input.Rules), Valid: true}
 	}
 
+	if input.ExternalAuthority != "" {
+		project, created, err := s.store.CreateProjectByReference(record)
+		if errors.Is(err, sqlstore.ErrProjectReferenceConflict) {
+			return nil, &ConflictError{Message: err.Error()}
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &ProjectCreateResult{ProjectRecord: project, Created: created, Found: !created}, nil
+	}
 	if err := s.store.CreateProject(record); err != nil {
 		return nil, err
 	}
 
-	return s.store.GetProject(id)
+	project, err := s.store.GetProject(id)
+	if err != nil {
+		return nil, err
+	}
+	return &ProjectCreateResult{ProjectRecord: project, Created: true}, nil
 }
 
 // Get fetches a project by ID.
@@ -269,4 +326,30 @@ func (s *ProjectService) DeleteArtifact(id int64) error {
 		return err
 	}
 	return s.store.DeleteProjectArtifact(id)
+}
+
+func validateProjectReference(authority, id string) error {
+	if authority == "" && id == "" {
+		return nil
+	}
+	if strings.TrimSpace(authority) == "" {
+		return &ValidationError{Field: "external_authority", Message: "external_authority and external_id must both be non-empty"}
+	}
+	if strings.TrimSpace(id) == "" {
+		return &ValidationError{Field: "external_id", Message: "external_authority and external_id must both be non-empty"}
+	}
+	return nil
+}
+
+func (s *ProjectService) GetByReference(authority, id string) (*sqlstore.ProjectRecord, error) {
+	if err := s.feature.Require("projects"); err != nil {
+		return nil, err
+	}
+	if authority == "" && id == "" {
+		return nil, &ValidationError{Field: "external_authority", Message: "external reference is required"}
+	}
+	if err := validateProjectReference(authority, id); err != nil {
+		return nil, err
+	}
+	return s.store.GetProjectByReference(authority, id)
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
@@ -13,12 +14,14 @@ import (
 func (a *Adapter) registerProjectTools() {
 	a.registerEntityFacetTool("project")
 	a.addTool(newTool("torque_project_create",
-		withDescription(`Create a project (feature-flagged: requires features.projects). Returns the ProjectRecord.
+		withDescription(`Create a project (feature-flagged: requires features.projects). Returns the ProjectRecord. Optional external_authority + external_id uniquely identify a project; supply both non-empty values. Replays return the same ID with created=false, found=true; first creation returns created=true, found=false. A different name OR repo_path on replay returns error.code=conflict without changes. Other fields are not updated on replay. Without a reference, behavior and response shape are unchanged.
 Use to group long-lived work by repo/app; sprints scope short-cycle execution, epics scope multi-sprint initiatives.
 repo_path must resolve to an existing directory (~ is expanded) — a missing path returns error.code=arg_invalid, field=repo_path, so stale metadata can never be created.
-Response shape: data = {<ProjectRecord fields>} — singleton.
+Response shape: data = {<ProjectRecord fields>, created: bool, found: bool} when referenced; otherwise {<ProjectRecord fields>} — singleton.
 Example: {"name":"Torque","repo_path":"/Users/me/Projects/torque"}`),
 		withString("name", required(), desc("Project name")),
+		withString("external_authority", desc("External identity authority, e.g. registry; requires external_id")),
+		withString("external_id", desc("External ID within authority, e.g. project:tether; requires external_authority")),
 		withString("description", desc("Project description")),
 		withString("repo_path", desc("Repository path — absolute or ~-prefixed; must point at an existing directory")),
 		withString("agent_path", desc("Path to an agent spec file for this project, relative to repo_path or absolute")),
@@ -33,11 +36,13 @@ Example: {"name":"Torque","repo_path":"/Users/me/Projects/torque"}`),
 	), a.handleProjectCreate)
 
 	a.addTool(newTool("torque_project_get",
-		withDescription(`Fetch a project's full record by ID.
+		withDescription(`Fetch a project's full record by ID OR external_authority + external_id (exactly one selector). Includes archived projects; unknown reference returns error.code=not_found.
 Use when you know the ID; torque_project_list for browsing, torque_task_list with project_id filter for the project's task set.
 Response shape: data = {<ProjectRecord fields>} — singleton.
 Example: {"id":"PRJ-20260820-0001"}`),
-		withString("id", required(), desc("Project ID")),
+		withString("id", desc("Project ID; mutually exclusive with external reference")),
+		withString("external_authority", desc("External authority; requires external_id instead of id")),
+		withString("external_id", desc("External ID; requires external_authority instead of id")),
 	), a.handleProjectGet)
 
 	a.addTool(newTool("torque_project_update",
@@ -133,12 +138,18 @@ func projectPermissionsMapArg(req map[string]any, key string) (map[string]string
 }
 
 func (a *Adapter) handleProjectCreate(ctx context.Context, req map[string]any) (any, error) {
+	authority, externalID, err := projectReferenceArgs(req)
+	if err != nil {
+		return nil, err
+	}
 	input := service.ProjectCreateInput{
-		Name:        reqStr(req, "name"),
-		Description: reqStr(req, "description"),
-		RepoPath:    reqStr(req, "repo_path"),
-		AgentPath:   reqStr(req, "agent_path"),
-		Icon:        reqStr(req, "icon"),
+		ExternalAuthority: authority,
+		ExternalID:        externalID,
+		Name:              reqStr(req, "name"),
+		Description:       reqStr(req, "description"),
+		RepoPath:          reqStr(req, "repo_path"),
+		AgentPath:         reqStr(req, "agent_path"),
+		Icon:              reqStr(req, "icon"),
 
 		ExecutionDefaults: reqStr(req, "execution_defaults"),
 	}
@@ -173,15 +184,31 @@ func (a *Adapter) handleProjectCreate(ctx context.Context, req map[string]any) (
 		input.Permissions = perms
 	}
 
-	project, err := a.svc.Project.Create(input)
+	project, err := a.svc.Project.CreateWithResult(input)
 	if err != nil {
 		return errFromService(err)
+	}
+	if authority == "" {
+		return okResult(project.ProjectRecord)
 	}
 	return okResult(project)
 }
 
 func (a *Adapter) handleProjectGet(ctx context.Context, req map[string]any) (any, error) {
-	project, err := a.svc.Project.Get(reqStr(req, "id"))
+	authority, externalID, err := projectReferenceArgs(req)
+	if err != nil {
+		return nil, err
+	}
+	id := reqStr(req, "id")
+	if (id == "") == (authority == "") {
+		return nil, argError(ErrCodeArgInvalid, "supply id OR external_authority + external_id", "id")
+	}
+	var project *sqlstore.ProjectRecord
+	if authority != "" {
+		project, err = a.svc.Project.GetByReference(authority, externalID)
+	} else {
+		project, err = a.svc.Project.Get(id)
+	}
 	if err != nil {
 		return errFromService(err)
 	}
@@ -396,4 +423,25 @@ func (a *Adapter) handleProjectUnarchive(ctx context.Context, req map[string]any
 		"unarchived": true,
 		"message":    fmt.Sprintf("Project %s unarchived", id),
 	})
+}
+
+func projectReferenceArgs(req map[string]any) (string, string, error) {
+	if !reqHasArg(req, "external_authority") && !reqHasArg(req, "external_id") {
+		return "", "", nil
+	}
+	authority, err := reqQueryString(req, "external_authority")
+	if err != nil {
+		return "", "", err
+	}
+	id, err := reqQueryString(req, "external_id")
+	if err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(authority) == "" {
+		return "", "", argError(ErrCodeArgInvalid, "both external reference fields must be non-empty", "external_authority")
+	}
+	if strings.TrimSpace(id) == "" {
+		return "", "", argError(ErrCodeArgInvalid, "both external reference fields must be non-empty", "external_id")
+	}
+	return authority, id, nil
 }
