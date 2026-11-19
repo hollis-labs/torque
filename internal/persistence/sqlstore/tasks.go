@@ -1736,3 +1736,31 @@ func (s *Store) CountUnitsInFlight() (int, error) {
 			OR json_extract(metadata, '$.unit_run.unconfirmed') = 1)`).Scan(&n)
 	return n, err
 }
+
+// UnitPlacementLoads sums reserved/live workers by their persisted placement.
+// Closing and unconfirmed runs retain their reservation until confirmed ended.
+// The current task is excluded when replacing its previous attempt.
+func (s *Store) UnitPlacementLoads(excludeTask string) (map[string]int, error) {
+	rows, err := s.ReadDB().Query(`SELECT json_extract(metadata, '$.unit_run.placement'),
+ SUM(CASE WHEN CAST(json_extract(metadata, '$.unit_run.workers') AS INTEGER) > 0
+ THEN CAST(json_extract(metadata, '$.unit_run.workers') AS INTEGER) ELSE 1 END) FROM tasks
+ WHERE id <> ? AND json_valid(metadata) AND (
+ json_extract(metadata, '$.unit_run.state') IN ('forming', 'active', 'closing', 'unconfirmed')
+ OR json_extract(metadata, '$.unit_run.unconfirmed') = 1)
+ AND COALESCE(json_extract(metadata, '$.unit_run.placement'), '') <> ''
+ GROUP BY json_extract(metadata, '$.unit_run.placement')`, excludeTask)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	loads := map[string]int{}
+	for rows.Next() {
+		var host string
+		var count int
+		if err := rows.Scan(&host, &count); err != nil {
+			return nil, err
+		}
+		loads[host] = count
+	}
+	return loads, rows.Err()
+}

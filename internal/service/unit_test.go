@@ -27,12 +27,13 @@ import (
 // too. Unknown runs 404. A roster lists the owner (coordinator) seat, which
 // stays active after the team stops. Faults are injected per test.
 type fakeTeamsAPI struct {
-	mu          sync.Mutex
-	runsByKey   map[string]string
-	formCalls   int
-	delegations []map[string]string
-	dissolved   map[string]bool
-	ended       bool
+	mu           sync.Mutex
+	runsByKey    map[string]string
+	formRequests []tetherclient.TeamForm
+	formCalls    int
+	delegations  []map[string]string
+	dissolved    map[string]bool
+	ended        bool
 
 	refuseForm   int           // 4xx on form (nothing formed)
 	replayStatus int           // status answered for a key that was already formed (e.g. 409)
@@ -42,7 +43,8 @@ type fakeTeamsAPI struct {
 	failDeleg    bool          // delegate answers 502
 	failDissolve bool          // dissolve answers 500
 	formDelay    time.Duration // slow formation
-	onForm       func()        // runs while a form is being handled
+	onDissolve   func()
+	onForm       func() // runs while a form is being handled
 	forms        []tetherclient.TeamForm
 	teamIDs      []string
 	teamRun      []string
@@ -77,6 +79,9 @@ func (f *fakeTeamsAPI) server(t *testing.T) *httptest.Server {
 		case "/teams/form":
 			f.mu.Lock()
 			f.formCalls++
+			var requested tetherclient.TeamForm
+			_ = json.Unmarshal(body, &requested)
+			f.formRequests = append(f.formRequests, requested)
 			delay, hook, refuse, lose, srvErr := f.formDelay, f.onForm, f.refuseForm, f.loseResponse, f.serverError
 			f.mu.Unlock()
 			if delay > 0 {
@@ -129,6 +134,12 @@ func (f *fakeTeamsAPI) server(t *testing.T) *httptest.Server {
 			f.delegations = append(f.delegations, m)
 			_, _ = w.Write([]byte(`{}`))
 		case "/teams/dissolve":
+			f.mu.Lock()
+			hook := f.onDissolve
+			f.mu.Unlock()
+			if hook != nil {
+				hook()
+			}
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			var m map[string]string
