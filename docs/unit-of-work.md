@@ -19,6 +19,36 @@ Models come from the launch each slot's definition pin resolves to in Tether's
 `teams-policy.yaml`. Torque only picks the pin. Default pins are in
 `service.DefaultUnitPins`; override with `TORQUE_UNIT_PINS` (JSON).
 
+## Worker placement
+
+Sol workers default to `spread`: choose the configured host with the fewest
+reserved units, counting forming, active, closing and unconfirmed runs. Sorted
+host names break ties deterministically. Each unit selects one worker pin, so
+all workers in a multi-worker unit share that host; orchestrator and reviewer
+placement stays with their existing catalog launches. This is unit balancing,
+not a host health check or runtime capacity scheduler.
+
+`unit_plan.placement` may name `worker-1` through `worker-6` or `build-1` to
+select that host explicitly. `catalog` uses the original `worker_sol` pin. Agy
+continues to use its catalog pin and rejects an explicit Sol host. There is no
+fallback when a configured worker is unavailable: Tether refuses the formation.
+
+Default pins use `team-worker-sol-w1` through `team-worker-sol-w6` and
+`team-worker-sol-build1`. Provision their exact definition pins, launch workers
+and Tether policy entries before enabling these defaults. Keep the original
+`team-worker-sol` definition for compatibility. Only include eligible hosts in
+`TORQUE_UNIT_PINS.worker_sol_placements`, an object mapping host names to
+`{id, revision, digest}` pins. Supply the usual role pins in that same JSON
+object. Explicit custom pin configurations without this map retain their base
+Sol pin; an explicit host absent from the map is refused.
+
+Before the first formation call, Torque persists the selected host and complete
+formation request in `metadata.unit_run.placement` and `.formation`. Ambiguous
+retries, including after restart, reuse that request despite subsequent pin,
+pool or plan changes. Pre-existing forming records without a snapshot retain
+the original base-pin formation path. Existing global `TORQUE_UNIT_MAX_ACTIVE`
+configuration is independent of placement and is unchanged.
+
 ## Brief routing guidance
 
 Every generated brief names `@workers` (plural even with one worker) and
@@ -107,6 +137,7 @@ update (an invalid plan is refused with the field named).
 | `slices` | no | | suggested order of work |
 | `workers` | no | 1 | 1-3. More than 1 needs registered pool identities (`TORQUE_UNIT_WORKER_POOL`) |
 | `worker_runtime` | no | `sol` | `sol` or `agy` |
+| `placement` | no | `spread` | Sol host: `worker-1`..`worker-6`, `build-1`; `catalog` keeps the base pin |
 | `escalate_to` | no | `@chief` | who the orchestrator escalates to, only when blocked |
 | `evidence` | no | | what the result must show (CI link, PR, test output) |
 | `merge_policy` | no | `reviewer_merges_on_green` | or `pr_only`, `none` |
@@ -208,7 +239,7 @@ On the `torque serve` process (restart required):
 | `TORQUE_UNIT_POLL` | run-state poll interval (default 15s) |
 | `TORQUE_UNIT_TIMEOUT` | default run lifetime (default 4h) |
 | `TORQUE_UNIT_WORKER_POOL` | comma-separated pre-registered worker identities, for plans with more than one worker |
-| `TORQUE_UNIT_PINS` | JSON override of the role definition pins |
+| `TORQUE_UNIT_PINS` | JSON role pins and optional `worker_sol_placements` host-to-pin map; custom configurations without the map keep base-pin placement |
 | `TORQUE_UNIT_MAX_ACTIVE` | units in flight (forming + running) across all projects, default 4; enforced by every dispatch, including explicit ones |
 | `TORQUE_SCHED_MAX_PER_PROJECT` | scheduler per-project concurrency of `doing` tasks. **Default is now 6** (was 1), on purpose, for every task kind, not just units |
 

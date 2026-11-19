@@ -113,3 +113,27 @@ func TestBriefTeamGuidance(t *testing.T) {
 		})
 	}
 }
+
+func TestPlacementValidation(t *testing.T) {
+	for _, tc := range []struct {
+		hint, runtime string
+		ok            bool
+	}{
+		{"", "sol", true}, {"spread", "sol", true}, {"catalog", "agy", true},
+		{"worker-1", "sol", true}, {"worker-6", "sol", true}, {"build-1", "sol", true},
+		{"worker-7", "sol", false}, {"worker-1", "agy", false}, {"arbitrary", "sol", false},
+	} {
+		t.Run(tc.hint+tc.runtime, func(t *testing.T) {
+			b, _ := json.Marshal(map[string]any{"workstream_id": "ws", "goal": "g", "done_when": []string{"d"}, "placement": tc.hint, "worker_runtime": tc.runtime})
+			p, err := unitplan.Parse(b)
+			if tc.ok {
+				require.NoError(t, err)
+				if tc.hint == "" {
+					require.Equal(t, "spread", p.Placement)
+				}
+			} else {
+				require.ErrorContains(t, err, "unit_plan.placement")
+			}
+		})
+	}
+}

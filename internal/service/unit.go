@@ -49,24 +49,30 @@ type UnitTeams interface {
 // teams-policy.yaml in the Tether catalog (the policy binds one launch, and so
 // one model, to each pin).
 type UnitPins struct {
-	Orchestrator tetherclient.DefinitionRef `json:"orchestrator"`
-	WorkerSol    tetherclient.DefinitionRef `json:"worker_sol"`
-	WorkerAgy    tetherclient.DefinitionRef `json:"worker_agy"`
-	Reviewer     tetherclient.DefinitionRef `json:"reviewer"`
+	Orchestrator        tetherclient.DefinitionRef            `json:"orchestrator"`
+	WorkerSol           tetherclient.DefinitionRef            `json:"worker_sol"`
+	WorkerAgy           tetherclient.DefinitionRef            `json:"worker_agy"`
+	Reviewer            tetherclient.DefinitionRef            `json:"reviewer"`
+	WorkerSolPlacements map[string]tetherclient.DefinitionRef `json:"worker_sol_placements,omitempty"`
 }
 
 const liveDigest = "sha256:c8692289df79259473f3907beb7951e6a2b6fcbb0fd4cca18bd4797493ff043c"
 
-// DefaultUnitPins are the pins in the live teams-policy.yaml as of 2026-11-19
-// (team-orchestrator-astra, team-worker-sol, team-worker-agy-w1,
-// team-reviewer-merger-astra).
+// DefaultUnitPins names the approved role and per-host Sol definitions.
+// Deployment must provision these exact pins in teams-policy.yaml first.
 func DefaultUnitPins() UnitPins {
-	return UnitPins{
+	pins := UnitPins{
 		Orchestrator: tetherclient.DefinitionRef{ID: "team-orchestrator", Revision: "r1", Digest: liveDigest},
 		WorkerSol:    tetherclient.DefinitionRef{ID: "team-worker-sol", Revision: "r1", Digest: liveDigest},
 		WorkerAgy:    tetherclient.DefinitionRef{ID: "team-worker-agy", Revision: "r1", Digest: liveDigest},
 		Reviewer:     tetherclient.DefinitionRef{ID: "team-reviewer-merger", Revision: "r1", Digest: liveDigest},
 	}
+	pins.WorkerSolPlacements = map[string]tetherclient.DefinitionRef{}
+	for i := 1; i <= 6; i++ {
+		pins.WorkerSolPlacements[fmt.Sprintf("worker-%d", i)] = tetherclient.DefinitionRef{ID: fmt.Sprintf("team-worker-sol-w%d", i), Revision: "r1", Digest: liveDigest}
+	}
+	pins.WorkerSolPlacements["build-1"] = tetherclient.DefinitionRef{ID: "team-worker-sol-build1", Revision: "r1", Digest: liveDigest}
+	return pins
 }
 
 // UnitConfig tunes the dispatcher.
@@ -114,6 +120,8 @@ func UnitConfigFromEnv() UnitConfig {
 		}
 	}
 	if raw := os.Getenv("TORQUE_UNIT_PINS"); raw != "" {
+		// An explicit custom pin set does not inherit fleet placements.
+		cfg.Pins.WorkerSolPlacements = nil
 		if err := json.Unmarshal([]byte(raw), &cfg.Pins); err != nil {
 			log.Printf("[unit] ignoring TORQUE_UNIT_PINS: %v", err)
 			cfg.Pins = DefaultUnitPins()
@@ -144,6 +152,10 @@ type UnitRun struct {
 	// Unconfirmed: the run could not be confirmed ended when the unit was
 	// closed. Dispatch refuses until it is dissolved or seen ended.
 	Unconfirmed bool `json:"unconfirmed,omitempty"`
+	// Placement and Formation are selected once before the first network call.
+	// Formation seals pins, pool identities and limits across ambiguous replays.
+	Placement string                 `json:"placement,omitempty"`
+	Formation *tetherclient.TeamForm `json:"formation,omitempty"`
 }
 
 // UnitDispatchInput names the task and optional plan overrides.
@@ -231,7 +243,7 @@ func (u *UnitService) Configure(teams UnitTeams, cfg UnitConfig) {
 	if cfg.FormingGiveUp <= 0 {
 		cfg.FormingGiveUp = 10 * time.Minute
 	}
-	if cfg.Pins == (UnitPins{}) {
+	if cfg.Pins.Orchestrator == (tetherclient.DefinitionRef{}) && cfg.Pins.WorkerSol == (tetherclient.DefinitionRef{}) && cfg.Pins.WorkerAgy == (tetherclient.DefinitionRef{}) && cfg.Pins.Reviewer == (tetherclient.DefinitionRef{}) && cfg.Pins.WorkerSolPlacements == nil {
 		cfg.Pins = DefaultUnitPins()
 	}
 	u.teams, u.cfg = teams, cfg
@@ -377,9 +389,7 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 	if err := plan.Validate(); err != nil {
 		return nil, &ValidationError{Field: "metadata.unit_plan", Message: err.Error()}
 	}
-	if int(plan.Workers) > 1 && len(u.cfg.WorkerPool) < int(plan.Workers) {
-		return nil, &ValidationError{Field: "workers", Message: fmt.Sprintf("%d workers need %d pre-registered pool identities; TORQUE_UNIT_WORKER_POOL lists %d (use workers=1 or register identities)", plan.Workers, plan.Workers, len(u.cfg.WorkerPool))}
-	}
+
 	n, cerr := u.store.CountUnitsInFlight()
 	if cerr != nil {
 		return nil, fmt.Errorf("unit dispatch: count units in flight: %w", cerr)
@@ -424,6 +434,38 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 		Workers: int(plan.Workers), WorkerRuntime: plan.WorkerRuntime, Ambiguous: at.ambiguous,
 		Replays: carry.Replays, AmbiguousSince: carry.AmbiguousSince,
 		StartedAt: started.Format(time.RFC3339), Deadline: started.Add(timeout).Format(time.RFC3339),
+	}
+	if at.ambiguous && prev.Formation == nil && int(plan.Workers) > 1 && len(u.cfg.WorkerPool) < int(plan.Workers) {
+		return nil, &ValidationError{Field: "workers", Message: "legacy forming replay requires its original worker pool identities"}
+	}
+	if at.ambiguous {
+		// Legacy forming records have no snapshot: retain their original catalog
+		// selection rather than introducing a new host under an existing key.
+		at.run.Placement, at.run.Formation = prev.Placement, prev.Formation
+		if prev.Formation != nil {
+			at.run.Workers, at.run.WorkerRuntime = prev.Workers, prev.WorkerRuntime
+			at.run.StartedAt, at.run.Deadline = prev.StartedAt, prev.Deadline
+			at.plan.Workers, at.plan.WorkerRuntime = unitplan.Int(prev.Workers), prev.WorkerRuntime
+		}
+	} else {
+		if int(plan.Workers) > 1 && len(u.cfg.WorkerPool) < int(plan.Workers) {
+			return nil, &ValidationError{Field: "workers", Message: fmt.Sprintf("%d workers need %d pre-registered pool identities; TORQUE_UNIT_WORKER_POOL lists %d (use workers=1 or register identities)", plan.Workers, plan.Workers, len(u.cfg.WorkerPool))}
+		}
+		placement, pin, err := u.selectPlacement(t.ID, plan)
+		if err != nil {
+			return nil, err
+		}
+		at.run.Placement = placement
+		form := u.buildForm(t.ID, attempt, plan, timeout)
+		if pin != nil {
+			slots := form.Team["slots"].([]tetherclient.TeamSlot)
+			for i := range slots {
+				if slots[i].Name == "workers" {
+					slots[i].DefinitionRef = *pin
+				}
+			}
+		}
+		at.run.Formation = &form
 	}
 	if at.confirm == nil && at.settle == nil {
 		if err := u.saveRun(t.ID, at.run, sqlstore.TaskUpdate{}); err != nil {
@@ -504,7 +546,12 @@ func (u *UnitService) run(at *unitAttempt) (*UnitDispatchResult, error) {
 		}
 	}
 
-	res, err := u.form(run, u.buildForm(t.ID, run.Attempt, plan, plan.TimeoutDuration(u.cfg.DefaultTimeout)))
+	formation := run.Formation
+	if formation == nil {
+		legacy := u.buildForm(t.ID, run.Attempt, plan, plan.TimeoutDuration(u.cfg.DefaultTimeout))
+		formation = &legacy
+	}
+	res, err := u.form(run, *formation)
 	if err != nil {
 		var te *tetherclient.TeamError
 		if errors.As(err, &te) && cleanRefusal(te) && !run.Ambiguous {

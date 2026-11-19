@@ -27,12 +27,13 @@ import (
 // too. Unknown runs 404. A roster lists the owner (coordinator) seat, which
 // stays active after the team stops. Faults are injected per test.
 type fakeTeamsAPI struct {
-	mu          sync.Mutex
-	runsByKey   map[string]string
-	formCalls   int
-	delegations []map[string]string
-	dissolved   map[string]bool
-	ended       bool
+	mu           sync.Mutex
+	runsByKey    map[string]string
+	formRequests []tetherclient.TeamForm
+	formCalls    int
+	delegations  []map[string]string
+	dissolved    map[string]bool
+	ended        bool
 
 	refuseForm   int           // 4xx on form (nothing formed)
 	replayStatus int           // status answered for a key that was already formed (e.g. 409)
@@ -77,6 +78,9 @@ func (f *fakeTeamsAPI) server(t *testing.T) *httptest.Server {
 		case "/teams/form":
 			f.mu.Lock()
 			f.formCalls++
+			var requested tetherclient.TeamForm
+			_ = json.Unmarshal(body, &requested)
+			f.formRequests = append(f.formRequests, requested)
 			delay, hook, refuse, lose, srvErr := f.formDelay, f.onForm, f.refuseForm, f.loseResponse, f.serverError
 			f.mu.Unlock()
 			if delay > 0 {

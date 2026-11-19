@@ -147,6 +147,7 @@ type Plan struct {
 	Scope        Scope  `json:"scope,omitempty"`
 	Slices       List   `json:"slices,omitempty"`
 
+	Placement     string `json:"placement,omitempty"`      // spread (default), catalog, or a Sol host
 	Workers       Int    `json:"workers,omitempty"`        // 1-3, default 1
 	WorkerRuntime string `json:"worker_runtime,omitempty"` // sol | agy, default sol
 
@@ -204,6 +205,10 @@ func (p *Plan) applyDefaults() {
 	if p.Workers == 0 {
 		p.Workers = MinWorkers
 	}
+	p.Placement = strings.ToLower(strings.TrimSpace(p.Placement))
+	if p.Placement == "" {
+		p.Placement = "spread"
+	}
 	p.WorkerRuntime = strings.ToLower(strings.TrimSpace(p.WorkerRuntime))
 	if p.WorkerRuntime == "" {
 		p.WorkerRuntime = RuntimeSol
@@ -240,6 +245,15 @@ func (p Plan) Validate() error {
 	case RuntimeSol, RuntimeAgy:
 	default:
 		return fmt.Errorf("unit_plan.worker_runtime: %q not one of sol, agy", p.WorkerRuntime)
+	}
+	switch p.Placement {
+	case "", "spread", "catalog":
+	case "worker-1", "worker-2", "worker-3", "worker-4", "worker-5", "worker-6", "build-1":
+		if p.WorkerRuntime != RuntimeSol {
+			return fmt.Errorf("unit_plan.placement: host selection requires worker_runtime sol")
+		}
+	default:
+		return fmt.Errorf("unit_plan.placement: %q must be spread, catalog, worker-1..worker-6, or build-1", p.Placement)
 	}
 	switch p.MergePolicy {
 	case MergeOnGreen, MergePROnly, MergeNone:
