@@ -91,16 +91,34 @@ The orchestrator adds a task comment starting `RESULT:` (outcome, PR links,
 evidence), then calls `tether_team_report_result`; Tether dissolves the run.
 When Torque sees the run ended:
 
-- with a `RESULT:` comment since dispatch: the task moves to `review` (or
-  `done` if `on_done=done`) and Torque posts the result;
+- with a `RESULT:` comment since dispatch: the task moves per `on_done` as the
+  executor path does (`review` -> review, `close` -> done, `notify` -> done plus
+  a `task.notify` event) and Torque posts the result. `on_review` is not
+  consulted: it governs a task already in review. If the comment stays while the
+  run is still live for `ResultGrace` (2 minutes), Torque dissolves the run and
+  finishes the unit; a result also wins over the deadline;
 - without one: the task is `blocked` with the reason;
-- past the deadline: Torque dissolves the run and blocks the task.
+- past the deadline with no result: Torque dissolves the run and blocks the task.
+
+Before changing anything Torque re-checks, under its lock, that the task is
+still `doing` with this run active. If the task is moved away while its team is
+live, or the `unit_run` record vanishes, or the tracker panics, Torque dissolves
+the run and records why. `metadata.unit_run` is written only by the dispatcher
+(atomically, in the same UPDATE); a caller's metadata edit keeps the stored value.
 
 ## Failure
 
-Torque never leaves a session running. If formation fails the task stays `todo`
-with `blocked_reason` set and is made `manual` so the scheduler does not loop on
-it. If briefing (or any Torque-side step) fails after the team formed, the run
+Torque never leaves a session running. A refused formation (a clean 4xx), or a
+plan the dispatcher refuses (invalid plan, several workers with no pool), leaves
+the task `todo` with `blocked_reason` set and `manual`, so the scheduler does
+not pick it again. A formation call that fails any other way (timeout, dropped
+connection, 5xx) may have formed a team, so it is not treated as "nothing
+formed": Torque retries with the SAME idempotency key to learn the run id, and if
+it still cannot, keeps the attempt in state `forming` (task `todo`, manual). The
+next dispatch replays that key and gets the same run, never a second team. Calls
+to Tether run on a context of their own, not the request's or the tick's.
+A run that could not be confirmed ended is flagged `unconfirmed`; the task cannot
+be dispatched again until the run is dissolved or seen ended. If briefing (or any Torque-side step) fails after the team formed, the run
 is dissolved first. Fix the cause and dispatch again (a new attempt, new key).
 If a dissolve itself fails, the reason says so; dissolve the run by hand.
 
@@ -116,7 +134,8 @@ On the `torque serve` process (restart required):
 | `TORQUE_UNIT_TIMEOUT` | default run lifetime (default 4h) |
 | `TORQUE_UNIT_WORKER_POOL` | comma-separated pre-registered worker identities, for plans with more than one worker |
 | `TORQUE_UNIT_PINS` | JSON override of the role definition pins |
-| `TORQUE_SCHED_MAX_PER_PROJECT` | per-project concurrency, default 6 |
+| `TORQUE_UNIT_MAX_ACTIVE` | units in flight (forming + running) across all projects, default 4; enforced by every dispatch, including explicit ones |
+| `TORQUE_SCHED_MAX_PER_PROJECT` | scheduler per-project concurrency of `doing` tasks. **Default is now 6** (was 1), on purpose, for every task kind, not just units |
 
 After a restart Torque re-attaches to every `doing` task whose `unit_run` is
 `active`.

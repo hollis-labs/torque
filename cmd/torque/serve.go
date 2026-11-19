@@ -260,6 +260,9 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 		uc.HTTP.Timeout = 90 * time.Second // forming a team launches several sessions
 		svc.Unit.Configure(uc, service.UnitConfigFromEnv())
 		sched.SetUnitDispatcher(svc.Unit.DispatchTask)
+		svc.Unit.SetNotifier(func(taskID, reason string) {
+			sched.EventBus().Publish(scheduler.SchedulerEvent{Type: "task.notify", TaskID: taskID, Data: map[string]interface{}{"reason": reason}})
+		})
 		log.Printf("[serve] unit-of-work dispatch forms teams through Tether at %s", uc.BaseURL)
 	}
 	stateWriter := writeq.New(store, writeq.Options{})

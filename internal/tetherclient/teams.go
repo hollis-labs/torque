@@ -100,15 +100,19 @@ func (r TeamRunInfo) Ended() bool {
 	}
 	// Dissolve stops or releases every member; a roster with members and none
 	// active is an ended run even if the run status string is unfamiliar.
-	if len(r.Members) == 0 {
-		return false
-	}
+	// The coordinator slot is the owner's seat; it stays "active" after the
+	// team has stopped, so it does not count as a live member.
+	agents := 0
 	for _, m := range r.Members {
+		if m.Slot == "coordinator" {
+			continue
+		}
+		agents++
 		if strings.EqualFold(m.Status, "active") {
 			return false
 		}
 	}
-	return true
+	return agents > 0
 }
 
 func (c *Client) postTeam(ctx context.Context, verb, key string, body any, out any) error {

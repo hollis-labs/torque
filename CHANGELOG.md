@@ -128,7 +128,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
-- `TORQUE_SCHED_MAX_PER_PROJECT` defaults to 6 (was 1). Set the live value in the service env file.
+- **`TORQUE_SCHED_MAX_PER_PROJECT` now defaults to 6 (was 1)**, at the owner's request. It applies to every task kind when the scheduler is enabled, not only units of work. Set the live value in the service env file. Unit dispatch has its own global limit, `TORQUE_UNIT_MAX_ACTIVE` (default 4).
 - Adopt published Harness v0.3.1, llm-core v0.1.0, agent v0.3.0 and
   plugin-mcp v0.2.0 packages (CW-20261009-0005). Agent boot artifacts use
   canonical native rendering and the workspace engine, bound to the accepted

@@ -32,6 +32,8 @@ func (s *Server) dispatchUnit(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.As(err, &verr):
 			writeFieldError(w, http.StatusBadRequest, verr.Field, verr.Message)
+		case errors.Is(err, service.ErrUnitCapacity):
+			writeError(w, http.StatusTooManyRequests, err.Error())
 		case errors.Is(err, sqlstore.ErrTaskNotFound):
 			writeError(w, http.StatusNotFound, err.Error())
 		default:

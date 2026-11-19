@@ -409,9 +409,15 @@ type TaskUpdate struct {
 	OnDoneMerge       *string
 	BlockedReason     *string
 	Metadata          *sql.NullString
-	SprintID          *sql.NullString
-	ProjectID         *sql.NullString
-	EpicID            *sql.NullString
+	// UnitRun, when set, is the JSON of the unit-of-work dispatcher's record
+	// (metadata.unit_run). It is merged into the stored metadata inside the
+	// UPDATE itself, so it cannot be lost to or clobber a concurrent metadata
+	// edit. It is the only way to write that key: a Metadata replacement
+	// keeps whatever unit_run the row already has.
+	UnitRun   *string
+	SprintID  *sql.NullString
+	ProjectID *sql.NullString
+	EpicID    *sql.NullString
 
 	// Facet fields (migration 007)
 	Kind                 *string
@@ -1391,8 +1397,17 @@ func updateTaskExec(ex dbExecer, id string, u TaskUpdate) error {
 		args = append(args, *u.BlockedReason)
 	}
 	if u.Metadata != nil {
-		setClauses = append(setClauses, "metadata = ?")
-		args = append(args, *u.Metadata)
+		// A caller's metadata replaces the column but never the dispatcher's
+		// unit_run record: carry the stored one over, atomically, in this UPDATE.
+		setClauses = append(setClauses, `metadata = CASE
+			WHEN json_valid(metadata) AND json_extract(metadata, '$.unit_run') IS NOT NULL
+			THEN json_set(CASE WHEN json_valid(?) THEN ? ELSE '{}' END, '$.unit_run', json(json_extract(metadata, '$.unit_run')))
+			ELSE ? END`)
+		args = append(args, *u.Metadata, *u.Metadata, *u.Metadata)
+	}
+	if u.UnitRun != nil {
+		setClauses = append(setClauses, "metadata = json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.unit_run', json(?))")
+		args = append(args, *u.UnitRun)
 	}
 	if u.SprintID != nil {
 		setClauses = append(setClauses, "sprint_id = ?")

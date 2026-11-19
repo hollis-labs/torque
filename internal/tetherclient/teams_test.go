@@ -76,4 +76,8 @@ func TestTeamRunEndedByStatus(t *testing.T) {
 	assert.True(t, TeamRunInfo{Status: "completed"}.Ended())
 	assert.False(t, TeamRunInfo{Status: "working", Members: []TeamMember{{Status: "active"}}}.Ended())
 	assert.False(t, TeamRunInfo{Status: "working"}.Ended())
+	// The owner seat stays active after the agents stop.
+	owner := TeamMember{Slot: "coordinator", Status: "active"}
+	assert.True(t, TeamRunInfo{Status: "working", Members: []TeamMember{owner, {Slot: "workers", Status: "stopped"}}}.Ended())
+	assert.False(t, TeamRunInfo{Status: "working", Members: []TeamMember{owner}}.Ended())
 }
