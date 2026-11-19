@@ -435,8 +435,8 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 		Replays: carry.Replays, AmbiguousSince: carry.AmbiguousSince,
 		StartedAt: started.Format(time.RFC3339), Deadline: started.Add(timeout).Format(time.RFC3339),
 	}
-	if at.ambiguous && prev.Formation == nil && int(plan.Workers) > 1 && len(u.cfg.WorkerPool) < int(plan.Workers) {
-		return nil, &ValidationError{Field: "workers", Message: "legacy forming replay requires its original worker pool identities"}
+	if (!at.ambiguous || prev.Formation == nil) && int(plan.Workers) > 1 && len(u.cfg.WorkerPool) < int(plan.Workers) {
+		return nil, &ValidationError{Field: "workers", Message: fmt.Sprintf("%d workers need %d pre-registered pool identities; TORQUE_UNIT_WORKER_POOL lists %d (use workers=1 or register identities)", plan.Workers, plan.Workers, len(u.cfg.WorkerPool))}
 	}
 	if at.ambiguous {
 		// Legacy forming records have no snapshot: retain their original catalog
@@ -447,25 +447,10 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 			at.run.StartedAt, at.run.Deadline = prev.StartedAt, prev.Deadline
 			at.plan.Workers, at.plan.WorkerRuntime = unitplan.Int(prev.Workers), prev.WorkerRuntime
 		}
-	} else {
-		if int(plan.Workers) > 1 && len(u.cfg.WorkerPool) < int(plan.Workers) {
-			return nil, &ValidationError{Field: "workers", Message: fmt.Sprintf("%d workers need %d pre-registered pool identities; TORQUE_UNIT_WORKER_POOL lists %d (use workers=1 or register identities)", plan.Workers, plan.Workers, len(u.cfg.WorkerPool))}
-		}
-		placement, pin, err := u.selectPlacement(t.ID, plan)
-		if err != nil {
+	} else if at.confirm == nil && at.settle == nil {
+		if err := u.prepareFormation(t.ID, plan, &at.run); err != nil {
 			return nil, err
 		}
-		at.run.Placement = placement
-		form := u.buildForm(t.ID, attempt, plan, timeout)
-		if pin != nil {
-			slots := form.Team["slots"].([]tetherclient.TeamSlot)
-			for i := range slots {
-				if slots[i].Name == "workers" {
-					slots[i].DefinitionRef = *pin
-				}
-			}
-		}
-		at.run.Formation = &form
 	}
 	if at.confirm == nil && at.settle == nil {
 		if err := u.saveRun(t.ID, at.run, sqlstore.TaskUpdate{}); err != nil {
@@ -532,8 +517,8 @@ func (u *UnitService) run(at *unitAttempt) (*UnitDispatchResult, error) {
 		if err := u.confirmEnded(*at.confirm); err != nil {
 			return nil, &ValidationError{Field: "run", Message: fmt.Sprintf("previous team run %s is not confirmed ended: %v; dissolve it first", at.confirm.RunID, err)}
 		}
-		if err := u.saveRun(t.ID, run, sqlstore.TaskUpdate{}); err != nil {
-			return nil, fmt.Errorf("unit dispatch: record attempt: %w", err)
+		if err := u.reserveFormation(t.ID, plan, &run); err != nil {
+			return nil, err
 		}
 	}
 
@@ -541,8 +526,8 @@ func (u *UnitService) run(at *unitAttempt) (*UnitDispatchResult, error) {
 		if err := u.settleStuck(t.ID, *at.settle, at.clear); err != nil {
 			return nil, err
 		}
-		if err := u.saveRun(t.ID, run, sqlstore.TaskUpdate{}); err != nil {
-			return nil, fmt.Errorf("unit dispatch: record attempt: %w", err)
+		if err := u.reserveFormation(t.ID, plan, &run); err != nil {
+			return nil, err
 		}
 	}
 

@@ -43,7 +43,8 @@ type fakeTeamsAPI struct {
 	failDeleg    bool          // delegate answers 502
 	failDissolve bool          // dissolve answers 500
 	formDelay    time.Duration // slow formation
-	onForm       func()        // runs while a form is being handled
+	onDissolve   func()
+	onForm       func() // runs while a form is being handled
 	forms        []tetherclient.TeamForm
 	teamIDs      []string
 	teamRun      []string
@@ -133,6 +134,12 @@ func (f *fakeTeamsAPI) server(t *testing.T) *httptest.Server {
 			f.delegations = append(f.delegations, m)
 			_, _ = w.Write([]byte(`{}`))
 		case "/teams/dissolve":
+			f.mu.Lock()
+			hook := f.onDissolve
+			f.mu.Unlock()
+			if hook != nil {
+				hook()
+			}
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			var m map[string]string

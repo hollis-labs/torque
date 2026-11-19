@@ -2,6 +2,8 @@ package service_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -205,4 +207,102 @@ func TestUnitPlacementConcurrentDispatchSeesFormingReservation(t *testing.T) {
 	require.NoError(t, <-results)
 	require.NoError(t, <-results)
 	require.NotEqual(t, unitRun(t, svc, first).Placement, unitRun(t, svc, second).Placement)
+}
+
+func setPlacementRun(t *testing.T, svc *service.Service, id, host, state string, workers int, unconfirmed bool) {
+	t.Helper()
+	b, err := json.Marshal(service.UnitRun{Placement: host, State: state, Workers: workers, Unconfirmed: unconfirmed})
+	require.NoError(t, err)
+	raw := string(b)
+	require.NoError(t, svc.Store().UpdateTask(id, sqlstore.TaskUpdate{UnitRun: &raw}))
+}
+
+func TestUnitPlacementWeightsEveryLiveObligationByWorkers(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		flag  bool
+		want  string
+	}{
+		{service.UnitForming, false, "worker-2"},
+		{service.UnitActive, false, "worker-2"},
+		{service.UnitClosing, false, "worker-2"},
+		{service.UnitUnconfirmed, false, "worker-2"},
+		{service.UnitFailed, true, "worker-2"},
+		{service.UnitDone, false, "worker-1"},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			pins := service.DefaultUnitPins()
+			pins.WorkerSolPlacements = map[string]tetherclient.DefinitionRef{
+				"worker-1": pins.WorkerSolPlacements["worker-1"],
+				"worker-2": pins.WorkerSolPlacements["worker-2"],
+			}
+			svc := unitSetup(t, newFake(), service.UnitConfig{MaxActive: 8, Pins: pins, WorkerPool: []string{"msg://agent/local/pool-1", "msg://agent/local/pool-2"}})
+			first := newUnitTask(t, svc, nil)
+			second := newUnitTask(t, svc, nil)
+			setPlacementRun(t, svc, first, "worker-1", tc.state, 3, tc.flag)
+			setPlacementRun(t, svc, second, "worker-2", service.UnitActive, 2, false)
+			id := newUnitTask(t, svc, map[string]any{"workers": 2})
+			_, err := dispatch(svc, id)
+			require.NoError(t, err)
+			run := unitRun(t, svc, id)
+			require.Equal(t, tc.want, run.Placement)
+			require.Equal(t, 2, run.Workers)
+			loads, err := svc.Store().UnitPlacementLoads("")
+			require.NoError(t, err)
+			if tc.state == service.UnitDone {
+				require.Equal(t, 2, loads["worker-1"])
+				require.Equal(t, 2, loads["worker-2"])
+			}
+			if tc.state != service.UnitDone {
+				require.Equal(t, 3, loads["worker-1"])
+				require.Equal(t, 4, loads["worker-2"])
+				// The newly admitted two-worker unit changes the next choice.
+				next := newUnitTask(t, svc, nil)
+				_, err = dispatch(svc, next)
+				require.NoError(t, err)
+				require.Equal(t, "worker-1", unitRun(t, svc, next).Placement)
+			}
+		})
+	}
+}
+
+func TestUnitPlacementSelectsAfterPreviousObligationSettles(t *testing.T) {
+	for _, state := range []string{service.UnitFailed, service.UnitUnconfirmed, service.UnitForming} {
+		t.Run(state, func(t *testing.T) {
+			fake := newFake()
+			fake.runsByKey["old-key"] = "old-run"
+			entered, release := make(chan struct{}, 1), make(chan struct{})
+			fake.onDissolve = func() { entered <- struct{}{}; <-release }
+			pins := service.DefaultUnitPins()
+			pins.WorkerSolPlacements = map[string]tetherclient.DefinitionRef{
+				"worker-1": pins.WorkerSolPlacements["worker-1"],
+				"worker-2": pins.WorkerSolPlacements["worker-2"],
+			}
+			svc := unitSetup(t, fake, service.UnitConfig{Pins: pins, MaxActive: 8})
+			replacing := newUnitTask(t, svc, nil)
+			// Failed+unconfirmed takes confirmEnded; unconfirmed and exhausted forming
+			// take settleStuck. Both must retain old custody during network settlement.
+			fake.teamIDs = []string{fmt.Sprintf("unit-%s-a1", strings.ToLower(replacing))}
+			fake.teamRun = []string{"old-run"}
+			b, err := json.Marshal(service.UnitRun{State: state, Unconfirmed: state == service.UnitFailed, Placement: "worker-2", Workers: 1, WorkerRuntime: "sol", Key: "old-key", RunID: "old-run", Attempt: 1, Replays: 5})
+			require.NoError(t, err)
+			raw := string(b)
+			require.NoError(t, svc.Store().UpdateTask(replacing, sqlstore.TaskUpdate{UnitRun: &raw}))
+			result := make(chan error, 1)
+			go func() { _, err := dispatch(svc, replacing); result <- err }()
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				close(release)
+				t.Fatal("settlement did not start")
+			}
+			other := newUnitTask(t, svc, nil)
+			_, err = dispatch(svc, other)
+			close(release)
+			require.NoError(t, err)
+			require.NoError(t, <-result)
+			require.Equal(t, "worker-1", unitRun(t, svc, other).Placement)
+			require.Equal(t, "worker-2", unitRun(t, svc, replacing).Placement)
+		})
+	}
 }

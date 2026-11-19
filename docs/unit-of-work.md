@@ -22,11 +22,13 @@ Models come from the launch each slot's definition pin resolves to in Tether's
 ## Worker placement
 
 Sol workers default to `spread`: choose the configured host with the fewest
-reserved units, counting forming, active, closing and unconfirmed runs. Sorted
+reserved workers, counting forming, active, closing and unconfirmed runs. Sorted
 host names break ties deterministically. Each unit selects one worker pin, so
 all workers in a multi-worker unit share that host; orchestrator and reviewer
 placement stays with their existing catalog launches. This is unit balancing,
-not a host health check or runtime capacity scheduler.
+not a host health check or runtime capacity scheduler. Reservations use each
+unit_run.workers count (one for historical records without a positive count);
+closing and unconfirmed obligations keep their load until confirmed ended.
 
 `unit_plan.placement` may name `worker-1` through `worker-6` or `build-1` to
 select that host explicitly. `catalog` uses the original `worker_sol` pin. Agy
