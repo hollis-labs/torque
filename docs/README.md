@@ -31,3 +31,5 @@ specs, decision records, and prior-art research — archived to
 `~/dev/agent-os/archive/torque/` in a docs cleanup pass. They were never the
 canonical source for current behavior; a fresh doc links to their content
 explicitly where it still matters.
+
+- [Durable request lifecycle and Tether integration](request-lifecycle.md)

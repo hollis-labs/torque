@@ -518,7 +518,11 @@ func (w *WriteTx) AddComment(c *CommentRecord) error {
 	}
 	const q = `INSERT INTO comments (entity_type, entity_id, author, content) VALUES (?, ?, ?, ?)
 		RETURNING id, created_at`
-	return w.tx.QueryRow(q, c.EntityType, c.EntityID, c.Author, c.Content).Scan(&c.ID, &c.CreatedAt)
+	if err := w.tx.QueryRow(q, c.EntityType, c.EntityID, c.Author, c.Content).Scan(&c.ID, &c.CreatedAt); err != nil {
+		return err
+	}
+	c.UpdatedAt = c.CreatedAt
+	return w.claimRequestComment(c)
 }
 
 // GetTaskRetryCount reads retry_count under the write transaction.
