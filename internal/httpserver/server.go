@@ -125,6 +125,8 @@ func (s *Server) routes() {
 		r.Post("/judge/suggestions/bulk", s.judgeBulk)
 		r.Post("/judge/suggestions/{id}/accept", s.judgeAccept)
 		r.Post("/judge/suggestions/{id}/reject", s.judgeReject)
+		r.Post("/requests/submit", s.submitRequest)
+		r.Put("/tasks/{id}/request/mail", s.attachRequestMail)
 		r.Get("/requests", s.listRequests)
 		r.Put("/tasks/{id}/request", s.registerRequest)
 		r.Get("/tasks/{id}/request", s.getRequest)

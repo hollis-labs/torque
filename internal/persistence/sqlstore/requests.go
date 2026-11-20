@@ -19,17 +19,19 @@ var (
 // RequestRecord is the durable request marker on a manual task. Times are UTC.
 // Transport delivery receipts remain owned by Tether, keyed by MailMessageID.
 type RequestRecord struct {
-	TaskID        string     `json:"task_id"`
-	RequesterURN  string     `json:"requester_urn"`
-	RecipientURN  string     `json:"recipient_urn"`
-	MailMessageID string     `json:"mail_message_id"`
-	State         string     `json:"state"`
-	SubmittedAt   time.Time  `json:"submitted_at"`
-	DueAckAt      time.Time  `json:"due_ack_at"`
-	AckAt         *time.Time `json:"ack_at"`
-	AlertedAt     *time.Time `json:"alerted_at"`
-	ClosedAt      *time.Time `json:"closed_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	TaskID          string     `json:"task_id"`
+	SendKey         string     `json:"send_key,omitempty"`
+	RecipientOnline bool       `json:"recipient_online"`
+	RequesterURN    string     `json:"requester_urn"`
+	RecipientURN    string     `json:"recipient_urn"`
+	MailMessageID   string     `json:"mail_message_id"`
+	State           string     `json:"state"`
+	SubmittedAt     time.Time  `json:"submitted_at"`
+	DueAckAt        time.Time  `json:"due_ack_at"`
+	AckAt           *time.Time `json:"ack_at"`
+	AlertedAt       *time.Time `json:"alerted_at"`
+	ClosedAt        *time.Time `json:"closed_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 type RequestRegistration struct {
@@ -70,7 +72,7 @@ func (s *Store) GetRequest(ctx context.Context, id string) (*RequestRecord, erro
 // RegisterRequest associates an existing manual task with one transport request.
 // Repeating the same identity is a no-op; it never resets deadlines or state.
 func (s *Store) RegisterRequest(ctx context.Context, id string, in RequestRegistration) (*RequestRecord, error) {
-	if !strings.HasPrefix(in.RequesterURN, "msg://") || !strings.HasPrefix(in.RecipientURN, "msg://") || strings.TrimSpace(in.MailMessageID) == "" {
+	if !singleRequestURN(in.RequesterURN) || !singleRequestURN(in.RecipientURN) || strings.TrimSpace(in.MailMessageID) == "" {
 		return nil, fmt.Errorf("%w: requester_urn, recipient_urn (msg://) and mail_message_id are required", ErrRequestInvalid)
 	}
 	w, err := s.BeginWriteTx(ctx)
@@ -111,22 +113,8 @@ func (s *Store) RegisterRequest(ctx context.Context, id string, in RequestRegist
 	if in.DueAckAt.IsZero() {
 		in.DueAckAt = now.Add(15 * time.Minute)
 	}
-	r := &RequestRecord{TaskID: id, RequesterURN: in.RequesterURN, RecipientURN: in.RecipientURN, MailMessageID: in.MailMessageID, State: "submitted", SubmittedAt: now, DueAckAt: in.DueAckAt.UTC(), UpdatedAt: now}
-	raw, _ := json.Marshal(r)
-	if _, err = w.tx.Exec(`INSERT INTO task_requests(task_id,mail_message_id,state,due_ack_at,awaiting_ack,record) VALUES(?,?,?,?,1,?)`, id, r.MailMessageID, r.State, r.DueAckAt.Format(requestTimeFormat), string(raw)); err != nil {
-		return nil, err
-	}
-	// Keep request tasks filterable with the existing task/tag surfaces.
-	if _, err = w.tx.Exec(`INSERT INTO tags(slug,name,description,color,created_at,updated_at) VALUES('request','Request','Durable Tether request','blue',?,?) ON CONFLICT(slug) DO NOTHING`, now, now); err != nil {
-		return nil, err
-	}
-	if _, err = w.tx.Exec(`INSERT INTO task_tags(task_id,tag_slug,sort_order,created_at) SELECT ?, 'request', COALESCE(MAX(sort_order),-1)+1, ? FROM task_tags WHERE task_id=? ON CONFLICT(task_id,tag_slug) DO NOTHING`, id, now, id); err != nil {
-		return nil, err
-	}
-	if err = w.requestMetadata(r); err != nil {
-		return nil, err
-	}
-	if err = w.requestEvent("request.submitted", r, "", ""); err != nil {
+	r := &RequestRecord{TaskID: id, RecipientOnline: true, RequesterURN: in.RequesterURN, RecipientURN: in.RecipientURN, MailMessageID: in.MailMessageID, State: "submitted", SubmittedAt: now, DueAckAt: in.DueAckAt.UTC(), UpdatedAt: now}
+	if err = w.insertRequest(r); err != nil {
 		return nil, err
 	}
 	if err = w.Commit(); err != nil {
@@ -325,4 +313,25 @@ func (w *WriteTx) requestMetadata(r *RequestRecord) error {
 	}
 	_, err = w.tx.Exec(`UPDATE tasks SET metadata=?,updated_at=? WHERE id=?`, string(body), updatedAtNow(), r.TaskID)
 	return err
+}
+
+func (w *WriteTx) insertRequest(r *RequestRecord) error {
+	raw, _ := json.Marshal(r)
+	if _, err := w.tx.Exec(`INSERT INTO task_requests(task_id,mail_message_id,state,due_ack_at,awaiting_ack,record) VALUES(?,?,?,?,1,?)`, r.TaskID, nullIfEmpty(r.MailMessageID), r.State, r.DueAckAt.Format(requestTimeFormat), string(raw)); err != nil {
+		return err
+	}
+	// Keep request tasks filterable with the existing task/tag surfaces.
+	if _, err := w.tx.Exec(`INSERT INTO tags(slug,name,description,color,created_at,updated_at) VALUES('request','Request','Durable Tether request','blue',?,?) ON CONFLICT(slug) DO NOTHING`, r.SubmittedAt, r.SubmittedAt); err != nil {
+		return err
+	}
+	if _, err := w.tx.Exec(`INSERT INTO task_tags(task_id,tag_slug,sort_order,created_at) SELECT ?, 'request', COALESCE(MAX(sort_order),-1)+1, ? FROM task_tags WHERE task_id=? ON CONFLICT(task_id,tag_slug) DO NOTHING`, r.TaskID, r.SubmittedAt, r.TaskID); err != nil {
+		return err
+	}
+	if err := w.requestMetadata(r); err != nil {
+		return err
+	}
+	if err := w.requestEvent("request.submitted", r, "", ""); err != nil {
+		return err
+	}
+	return nil
 }

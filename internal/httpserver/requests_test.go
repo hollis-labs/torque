@@ -55,3 +55,31 @@ func TestHTTPRequestLifecycle(t *testing.T) {
 	assert.NotNil(t, rec["closed_at"])
 	call("POST", path+"/request/transition", `{"state":"in_progress"}`, 409)
 }
+
+func TestHTTPRequestSubmitAndAttach(t *testing.T) {
+	ts := setupTestServer(t)
+	call := func(method, path, body string, status int) map[string]any {
+		t.Helper()
+		req, err := http.NewRequest(method, ts.URL+path, bytes.NewBufferString(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer res.Body.Close()
+		var out map[string]any
+		require.NoError(t, json.NewDecoder(res.Body).Decode(&out))
+		require.Equal(t, status, res.StatusCode, out)
+		return out
+	}
+	body := `{"requester_urn":"msg://user/local/owner","recipient_urn":"msg://agent/local/worker","send_key":"stable","subject":"Check reports","body":"Yesterday","deliverable":"Summary","recipient_online":false}`
+	r := call("POST", "/api/v1/requests/submit", body, 200)
+	assert.Empty(t, r["mail_message_id"])
+	assert.Equal(t, r["submitted_at"], r["due_ack_at"])
+	assert.Equal(t, r, call("POST", "/api/v1/requests/submit", body, 200))
+	path := "/api/v1/tasks/" + r["task_id"].(string) + "/request/mail"
+	attached := call("PUT", path, `{"mail_message_id":"transport-id"}`, 200)
+	assert.Equal(t, "transport-id", attached["mail_message_id"])
+	assert.Equal(t, attached, call("PUT", path, `{"mail_message_id":"transport-id"}`, 200))
+	call("PUT", path, `{"mail_message_id":"other-id"}`, 409)
+	call("POST", "/api/v1/requests/submit", `{"requester_urn":"msg://user/local/owner","recipient_urn":"msg://agent/local/worker","send_key":"stable","subject":"Changed"}`, 409)
+}

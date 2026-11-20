@@ -98,3 +98,32 @@ func (s *Server) listRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "next_after_task_id": next})
 }
+
+func (s *Server) submitRequest(w http.ResponseWriter, r *http.Request) {
+	var in sqlstore.RequestSubmission
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	rec, err := s.svc.Store().SubmitRequest(r.Context(), in)
+	if err != nil {
+		requestError(w, err)
+		return
+	}
+	writeJSON(w, 200, rec)
+}
+func (s *Server) attachRequestMail(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		MailMessageID string `json:"mail_message_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	rec, err := s.svc.Store().AttachRequestMail(r.Context(), chi.URLParam(r, "id"), in.MailMessageID)
+	if err != nil {
+		requestError(w, err)
+		return
+	}
+	writeJSON(w, 200, rec)
+}
