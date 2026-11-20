@@ -20,6 +20,7 @@ var (
 // Transport delivery receipts remain owned by Tether, keyed by MailMessageID.
 type RequestRecord struct {
 	TaskID          string     `json:"task_id"`
+	IdempotencyKey  string     `json:"idempotency_key,omitempty"`
 	SendKey         string     `json:"send_key,omitempty"`
 	RecipientOnline bool       `json:"recipient_online"`
 	RequesterURN    string     `json:"requester_urn"`
@@ -42,10 +43,12 @@ type RequestRegistration struct {
 }
 
 type RequestTransition struct {
-	State   string `json:"state"`
-	Summary string `json:"summary,omitempty"`
-	Author  string `json:"author,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	ActorURN string          `json:"actor_urn,omitempty"`
+	Evidence json.RawMessage `json:"evidence,omitempty"`
+	State    string          `json:"state"`
+	Summary  string          `json:"summary,omitempty"`
+	Author   string          `json:"author,omitempty"`
+	Reason   string          `json:"reason,omitempty"`
 }
 
 const requestTimeFormat = "2006-01-02T15:04:05.000000000Z"
@@ -194,6 +197,23 @@ func requestClosed(state string) bool {
 }
 
 func (w *WriteTx) transitionRequest(id string, in RequestTransition) (*RequestRecord, error) {
+	if in.ActorURN != "" {
+		if in.Author != "" && in.Author != in.ActorURN {
+			return nil, fmt.Errorf("%w: actor_urn and author differ", ErrRequestInvalid)
+		}
+		in.Author = in.ActorURN
+	}
+	hasSummary := strings.TrimSpace(in.Summary) != ""
+	if len(in.Evidence) > 0 && string(in.Evidence) != "null" {
+		var evidence string
+		if err := json.Unmarshal(in.Evidence, &evidence); err != nil {
+			evidence = string(in.Evidence)
+		}
+		if strings.TrimSpace(evidence) != "" {
+			in.Summary += "\nEvidence: " + evidence
+		}
+	}
+
 	switch in.State {
 	case "acknowledged", "in_progress", "done", "declined", "blocked", "unacknowledged_alert":
 	default:
@@ -213,8 +233,16 @@ func (w *WriteTx) transitionRequest(id string, in RequestTransition) (*RequestRe
 	if requestClosed(r.State) {
 		return nil, fmt.Errorf("%w: request is closed", ErrRequestConflict)
 	}
-	if requestClosed(in.State) && strings.TrimSpace(in.Summary) == "" {
+	if requestClosed(in.State) && !hasSummary {
 		return nil, fmt.Errorf("%w: final summary is required", ErrRequestInvalid)
+	}
+	var taskStatus string
+	if err = w.tx.QueryRow(`SELECT status FROM tasks WHERE id=?`, id).Scan(&taskStatus); err != nil {
+		return nil, err
+	}
+	taskTerminal := taskStatus == "done" || taskStatus == "archived"
+	if taskTerminal && !requestClosed(in.State) && in.State != "unacknowledged_alert" {
+		return nil, fmt.Errorf("%w: task is terminal", ErrRequestConflict)
 	}
 	now := time.Now().UTC()
 	r.UpdatedAt = now
@@ -265,8 +293,10 @@ func (w *WriteTx) transitionRequest(id string, in RequestTransition) (*RequestRe
 		if in.State == "blocked" {
 			status = "blocked"
 		}
-		if err = w.TransitionTask(id, status); err != nil {
-			return nil, err
+		if !taskTerminal {
+			if err = w.TransitionTask(id, status); err != nil {
+				return nil, err
+			}
 		}
 		if requestClosed(in.State) {
 			if err = w.requestEvent("request.closed", r, from, in.Reason); err != nil {

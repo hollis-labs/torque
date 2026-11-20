@@ -16,6 +16,7 @@ import (
 type RequestSubmission struct {
 	RequesterURN    string    `json:"requester_urn"`
 	RecipientURN    string    `json:"recipient_urn"`
+	IdempotencyKey  string    `json:"idempotency_key,omitempty"`
 	SendKey         string    `json:"send_key"`
 	Subject         string    `json:"subject"`
 	Body            string    `json:"body"`
@@ -33,6 +34,13 @@ func singleRequestURN(urn string) bool {
 // one serialized transaction. A sender-scoped send key creates at most one
 // task even if the caller crashes before receiving the response.
 func (s *Store) SubmitRequest(ctx context.Context, in RequestSubmission) (*RequestRecord, error) {
+	if in.IdempotencyKey != "" {
+		if in.SendKey != "" && in.SendKey != in.IdempotencyKey {
+			return nil, fmt.Errorf("%w: idempotency_key and send_key differ", ErrRequestInvalid)
+		}
+		in.SendKey = in.IdempotencyKey
+	}
+
 	if !singleRequestURN(in.RequesterURN) || !singleRequestURN(in.RecipientURN) || strings.TrimSpace(in.SendKey) == "" || strings.TrimSpace(in.Subject) == "" {
 		return nil, fmt.Errorf("%w: single requester_urn and recipient_urn, send_key and subject are required", ErrRequestInvalid)
 	}
@@ -108,7 +116,7 @@ func (s *Store) SubmitRequest(ctx context.Context, in RequestSubmission) (*Reque
 	if in.RecipientOnline != nil && !*in.RecipientOnline {
 		due = now
 	}
-	r := &RequestRecord{TaskID: id, RecipientOnline: in.RecipientOnline == nil || *in.RecipientOnline, SendKey: in.SendKey, RequesterURN: in.RequesterURN, RecipientURN: in.RecipientURN, State: "submitted", SubmittedAt: now, DueAckAt: due, UpdatedAt: now}
+	r := &RequestRecord{TaskID: id, IdempotencyKey: in.SendKey, RecipientOnline: in.RecipientOnline == nil || *in.RecipientOnline, SendKey: in.SendKey, RequesterURN: in.RequesterURN, RecipientURN: in.RecipientURN, State: "submitted", SubmittedAt: now, DueAckAt: due, UpdatedAt: now}
 	if err = w.insertRequest(r); err != nil {
 		return nil, err
 	}

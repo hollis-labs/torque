@@ -83,3 +83,44 @@ func TestHTTPRequestSubmitAndAttach(t *testing.T) {
 	call("PUT", path, `{"mail_message_id":"other-id"}`, 409)
 	call("POST", "/api/v1/requests/submit", `{"requester_urn":"msg://user/local/owner","recipient_urn":"msg://agent/local/worker","send_key":"stable","subject":"Changed"}`, 409)
 }
+
+func TestHTTPRequestCanonicalContract(t *testing.T) {
+	ts := setupTestServer(t)
+	call := func(method, path, body string, status int) map[string]any {
+		t.Helper()
+		req, err := http.NewRequest(method, ts.URL+path, bytes.NewBufferString(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer res.Body.Close()
+		var out map[string]any
+		require.NoError(t, json.NewDecoder(res.Body).Decode(&out))
+		require.Equal(t, status, res.StatusCode, out)
+		return out
+	}
+	body := `{"requester_urn":"msg://user/local/owner","recipient_urn":"msg://agent/local/worker","idempotency_key":"canonical-key","subject":"Work","body":"Check reports","deliverable":"Summary","recipient_online":false}`
+	r := call("POST", "/api/v1/requests", body, 200)
+	assert.Equal(t, "canonical-key", r["idempotency_key"])
+	assert.Equal(t, r, call("POST", "/api/v1/requests", body, 200))
+	path := "/api/v1/tasks/" + r["task_id"].(string)
+	attached := call("PATCH", path+"/request", `{"mail_message_id":"actual-id"}`, 200)
+	assert.Equal(t, "actual-id", attached["mail_message_id"])
+	call("POST", path+"/request/transition", `{"actor_urn":"msg://agent/local/worker","state":"done","evidence":"Tests pass"}`, 400)
+	closed := call("POST", path+"/request/transition", `{"actor_urn":"msg://agent/local/worker","state":"done","summary":"DONE: checked","evidence":{"tests":"pass"}}`, 200)
+	assert.Equal(t, "done", closed["state"])
+	comments := call("GET", path, "", 200)
+	assert.Equal(t, "done", comments["status"])
+	// Read comments to verify actor/evidence.
+	res, err := http.Get(ts.URL + path + "/comments")
+	require.NoError(t, err)
+	defer res.Body.Close()
+	var envelope struct {
+		Items []map[string]any `json:"items"`
+	}
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&envelope))
+	rows := envelope.Items
+	require.Len(t, rows, 1)
+	assert.Equal(t, "msg://agent/local/worker", rows[0]["author"])
+	assert.Contains(t, rows[0]["content"], `Evidence: {"tests":"pass"}`)
+}

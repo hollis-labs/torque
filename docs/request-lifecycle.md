@@ -8,14 +8,14 @@ marker in `metadata.request`; the dedicated request API is authoritative.
 
 All endpoints below use the existing `/api/v1` authentication policy.
 
-1. **Before sending mail**, `POST /api/v1/requests/submit`:
+1. **Before sending mail**, `POST /api/v1/requests`:
    ```json
-   {"requester_urn":"msg://user/local/owner","recipient_urn":"msg://agent/local/worker","send_key":"stable-sender-scoped-key","subject":"Check reports","body":"Check yesterday's reports","deliverable":"Report summary","recipient_online":true}
+   {"requester_urn":"msg://user/local/owner","recipient_urn":"msg://agent/local/worker","idempotency_key":"stable-sender-scoped-key","subject":"Check reports","body":"Check yesterday's reports","deliverable":"Report summary","recipient_online":true}
    ```
    Response is a bare request record (HTTP 200), including `task_id` and
-   `send_key`; `mail_message_id` is initially an empty string. This atomically
+   `idempotency_key`; `mail_message_id` is initially an empty string. This atomically
    creates a manual task and registers its lifecycle. The `(requester_urn,
-   send_key)` pair is unique. Retrying returns the current record, without
+   idempotency_key)` pair is unique. Retrying returns the current record, without
    creating a second task or resetting timestamps. Changed recipient, subject,
    body, deliverable, or explicit task link returns 409. Keys are scoped to
    requester: another requester can use the same key.
@@ -34,7 +34,7 @@ All endpoints below use the existing `/api/v1` authentication policy.
    because recipient liveness changed.
 2. Put `task_id` into the transport request envelope and send with the same
    sender-scoped send key. The transport allocates its actual mail ID.
-3. Attach that ID using `PUT /api/v1/tasks/{id}/request/mail`:
+3. Attach that ID using `PATCH /api/v1/tasks/{id}/request`:
    ```json
    {"mail_message_id":"actual-transport-generated-id"}
    ```
@@ -43,24 +43,31 @@ All endpoints below use the existing `/api/v1` authentication policy.
    crash interrupts attachment, retry the idempotent transport send to recover
    its ID, then attach it. An unfiltered `GET /api/v1/requests` scan includes
    records whose `mail_message_id` is empty for repair after restarts.
-4. Read `GET /api/v1/tasks/{id}/request`. Responses have `task_id`, `send_key`,
+4. Read `GET /api/v1/tasks/{id}/request`. Responses have `task_id`, `idempotency_key`, `send_key`,
    `requester_urn`, `recipient_urn`, `recipient_online`, `mail_message_id`, `state`, `submitted_at`,
    `due_ack_at`, `ack_at`, `alerted_at`, `closed_at`, `updated_at`. Times are UTC
    RFC3339; unset times are JSON null. `send_key` is absent only for the legacy
    direct-link registration path.
 5. Transition with `POST /api/v1/tasks/{id}/request/transition`:
    ```json
-   {"state":"done","summary":"DONE · task-id\nOutcome: checked reports","author":"msg://agent/local/worker"}
+   {"state":"done","summary":"DONE · task-id\nOutcome: checked reports","actor_urn":"msg://agent/local/worker","evidence":{"tests":"pass"}}
    ```
    States are `acknowledged`, `in_progress`, `done`, `declined`, `blocked`.
    Terminal states require a nonempty `summary`, stored as a task comment.
-   `author` is audit text; callers use the normal authenticated API. Include
-   evidence in the summary. `reason` optionally explains the event. The first
+   `actor_urn` is audit text; callers use the normal authenticated API.
+   Optional `evidence` accepts a string or JSON value and appends it to the
+   persisted summary comment. A terminal transition still requires a summary
+   even when evidence is supplied. `reason` optionally explains the event. The first
    work/terminal transition implicitly acknowledges, so a fast reply need not
    make multiple calls. Repeated states and acknowledgment after work are
    no-ops; closed requests cannot reopen. Task status becomes `doing` for
    acknowledgment/work, `done` for done/declined, and `blocked` for blocked.
    The request lifecycle is separate from the task FSM.
+
+The earlier `POST /api/v1/requests/submit` with `send_key`,
+`PUT /api/v1/tasks/{id}/request/mail`, and transition `author` remain aliases.
+Specifying both key names or both actor names with different values returns 400.
+Responses include both key names on submitted requests for compatibility.
 
 For callers that already have both a task and an immutable actual mail ID,
 `PUT /api/v1/tasks/{id}/request` still supports direct association with
@@ -70,6 +77,13 @@ not create tasks and is not the submit-before-send transport flow.
 An original task comment beginning `STATUS started` also acknowledges the request
 atomically with comment persistence (including queued/bulk comment paths).
 Editing old comments or quoting that text elsewhere does not acknowledge.
+The acknowledgment runs inside `WriteTx.AddComment`, including
+`TaskService.TransitionWithComment` and standalone MCP. It does not consume or
+replace the bootstrap comment observer slot, so session lifecycle observers
+continue to receive their normal callbacks. Late started comments never reopen
+closed requests or independently terminal tasks; final replies can close the
+request while preserving an already done/archived task status.
+
 
 ## Watcher contract
 
