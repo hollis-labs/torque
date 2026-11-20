@@ -116,6 +116,13 @@ func (s *Store) RegisterRequest(ctx context.Context, id string, in RequestRegist
 	if _, err = w.tx.Exec(`INSERT INTO task_requests(task_id,mail_message_id,state,due_ack_at,awaiting_ack,record) VALUES(?,?,?,?,1,?)`, id, r.MailMessageID, r.State, r.DueAckAt.Format(requestTimeFormat), string(raw)); err != nil {
 		return nil, err
 	}
+	// Keep request tasks filterable with the existing task/tag surfaces.
+	if _, err = w.tx.Exec(`INSERT INTO tags(slug,name,description,color,created_at,updated_at) VALUES('request','Request','Durable Tether request','blue',?,?) ON CONFLICT(slug) DO NOTHING`, now, now); err != nil {
+		return nil, err
+	}
+	if _, err = w.tx.Exec(`INSERT INTO task_tags(task_id,tag_slug,sort_order,created_at) SELECT ?, 'request', COALESCE(MAX(sort_order),-1)+1, ? FROM task_tags WHERE task_id=? ON CONFLICT(task_id,tag_slug) DO NOTHING`, id, now, id); err != nil {
+		return nil, err
+	}
 	if err = w.requestMetadata(r); err != nil {
 		return nil, err
 	}

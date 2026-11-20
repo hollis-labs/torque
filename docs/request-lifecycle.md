@@ -1,6 +1,6 @@
 # Durable requests (CW-20261120-0177)
 
-A request is an existing **manual Torque task**, with a durable request marker.
+A request is an existing **manual Torque task**, with a `request` tag and a durable request marker.
 Tether owns request/reply transport, delivery receipts and the acknowledgment
 watcher. Torque owns the lifecycle and transactional events. No request task is
 made dispatchable by this API. Existing task reads (HTTP and MCP) expose the
