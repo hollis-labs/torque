@@ -1,6 +1,7 @@
 package sqlstore
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -161,9 +162,15 @@ func (s *Store) AddComment(c *CommentRecord) error {
 	if c.EntityType == "" {
 		c.EntityType = EntityTypeTask
 	}
-	const q = `INSERT INTO comments (entity_type, entity_id, author, content) VALUES (?, ?, ?, ?)
-		RETURNING id, created_at, updated_at`
-	return s.db.QueryRow(q, c.EntityType, c.EntityID, c.Author, c.Content).Scan(&c.ID, &c.CreatedAt, &c.UpdatedAt)
+	w, err := s.BeginWriteTx(context.Background())
+	if err != nil {
+		return err
+	}
+	defer w.Rollback()
+	if err := w.AddComment(c); err != nil {
+		return err
+	}
+	return w.Commit()
 }
 
 // GetComment fetches a single comment by id. Returns an error wrapping
