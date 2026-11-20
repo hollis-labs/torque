@@ -54,9 +54,13 @@ All endpoints below use the existing `/api/v1` authentication policy.
    ```
    States are `acknowledged`, `in_progress`, `done`, `declined`, `blocked`.
    Terminal states require a nonempty `summary`, stored as a task comment.
-   `actor_urn` is audit text; callers use the normal authenticated API.
-   Optional `evidence` accepts a string or JSON value and appends it to the
-   persisted summary comment. A terminal transition still requires a summary
+   `actor_urn` (or `author`) is optional; when supplied it must equal the request
+   recipient URN, including retries, otherwise the API returns 403 without
+   changing state. Tether authenticates the transport sender before asserting
+   this actor through the normal authenticated API. The alert sweeper can omit
+   the actor field.
+   Optional `evidence` accepts `[]string` and appends the lines to the persisted
+   summary comment; strings and JSON objects remain compatible. A terminal transition still requires a summary
    even when evidence is supplied. `reason` optionally explains the event. The first
    work/terminal transition implicitly acknowledges, so a fast reply need not
    make multiple calls. Repeated states and acknowledgment after work are

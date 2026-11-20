@@ -16,6 +16,8 @@ func requestError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sqlstore.ErrRequestNotFound):
 		code = http.StatusNotFound
+	case errors.Is(err, sqlstore.ErrRequestForbidden):
+		code = http.StatusForbidden
 	case errors.Is(err, sqlstore.ErrRequestConflict):
 		code = http.StatusConflict
 	case errors.Is(err, sqlstore.ErrRequestInvalid):

@@ -107,8 +107,10 @@ func TestHTTPRequestCanonicalContract(t *testing.T) {
 	attached := call("PATCH", path+"/request", `{"mail_message_id":"actual-id"}`, 200)
 	assert.Equal(t, "actual-id", attached["mail_message_id"])
 	call("POST", path+"/request/transition", `{"actor_urn":"msg://agent/local/worker","state":"done","evidence":"Tests pass"}`, 400)
-	closed := call("POST", path+"/request/transition", `{"actor_urn":"msg://agent/local/worker","state":"done","summary":"DONE: checked","evidence":{"tests":"pass"}}`, 200)
+	call("POST", path+"/request/transition", `{"actor_urn":"msg://agent/local/intruder","state":"done","summary":"Wrong recipient"}`, 403)
+	closed := call("POST", path+"/request/transition", `{"actor_urn":"msg://agent/local/worker","state":"done","summary":"DONE: checked","evidence":["tests pass","ci green"]}`, 200)
 	assert.Equal(t, "done", closed["state"])
+	call("POST", path+"/request/transition", `{"actor_urn":"msg://agent/local/intruder","state":"done","summary":"Unauthorized retry"}`, 403)
 	comments := call("GET", path, "", 200)
 	assert.Equal(t, "done", comments["status"])
 	// Read comments to verify actor/evidence.
@@ -122,5 +124,5 @@ func TestHTTPRequestCanonicalContract(t *testing.T) {
 	rows := envelope.Items
 	require.Len(t, rows, 1)
 	assert.Equal(t, "msg://agent/local/worker", rows[0]["author"])
-	assert.Contains(t, rows[0]["content"], `Evidence: {"tests":"pass"}`)
+	assert.Contains(t, rows[0]["content"], "Evidence: \n- tests pass\n- ci green")
 }

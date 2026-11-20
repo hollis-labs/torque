@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	ErrRequestNotFound = errors.New("request not found")
-	ErrRequestConflict = errors.New("request conflict")
-	ErrRequestInvalid  = errors.New("invalid request")
+	ErrRequestNotFound  = errors.New("request not found")
+	ErrRequestConflict  = errors.New("request conflict")
+	ErrRequestInvalid   = errors.New("invalid request")
+	ErrRequestForbidden = errors.New("request actor is not the recipient")
 )
 
 // RequestRecord is the durable request marker on a manual task. Times are UTC.
@@ -206,7 +207,12 @@ func (w *WriteTx) transitionRequest(id string, in RequestTransition) (*RequestRe
 	hasSummary := strings.TrimSpace(in.Summary) != ""
 	if len(in.Evidence) > 0 && string(in.Evidence) != "null" {
 		var evidence string
-		if err := json.Unmarshal(in.Evidence, &evidence); err != nil {
+		var lines []string
+		if err := json.Unmarshal(in.Evidence, &lines); err == nil && lines != nil {
+			if len(lines) > 0 {
+				evidence = "\n- " + strings.Join(lines, "\n- ")
+			}
+		} else if err := json.Unmarshal(in.Evidence, &evidence); err != nil {
 			evidence = string(in.Evidence)
 		}
 		if strings.TrimSpace(evidence) != "" {
@@ -222,6 +228,10 @@ func (w *WriteTx) transitionRequest(id string, in RequestTransition) (*RequestRe
 	r, err := scanRequest(w.tx.QueryRow(`SELECT record FROM task_requests WHERE task_id = ?`, id))
 	if err != nil {
 		return nil, err
+	}
+	// Check supplied actor before retry no-ops as well as state changes.
+	if in.Author != "" && in.Author != r.RecipientURN {
+		return nil, ErrRequestForbidden
 	}
 	// Retries are side-effect-free, including terminal reply retries.
 	if r.State == in.State || (in.State == "acknowledged" && r.AckAt != nil) {
