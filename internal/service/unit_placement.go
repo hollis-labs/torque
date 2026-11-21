@@ -87,6 +87,15 @@ func (u *UnitService) reserveFormation(taskID string, plan unitplan.Plan, run *U
 	if err := u.prepareFormation(taskID, plan, run); err != nil {
 		return err
 	}
+	if u.identity != nil {
+		t, err := u.task.Get(taskID)
+		if err != nil {
+			return err
+		}
+		if err = u.identity.reserve(u.baseCtx, t, run.WorkstreamKey, run.WorkstreamProjectID); err != nil {
+			return err
+		}
+	}
 	if err := u.saveRun(taskID, *run, sqlstore.TaskUpdate{}); err != nil {
 		return fmt.Errorf("unit dispatch: record attempt: %w", err)
 	}

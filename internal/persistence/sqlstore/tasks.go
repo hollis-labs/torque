@@ -1239,7 +1239,7 @@ func (s *Store) listTasksRows(f TaskFilter, where []string, args []any) ([]TaskR
 
 // UpdateTask applies non-nil pointer fields to the task row.
 func (s *Store) UpdateTask(id string, u TaskUpdate) error {
-	if u.PhaseID == nil && u.ParentID == nil {
+	if u.PhaseID == nil && u.ParentID == nil && u.UnitRun == nil {
 		return updateTaskExec(s.db, id, u)
 	}
 	// A change of parent or phase can start or complete a phase, so it runs in
@@ -1399,14 +1399,15 @@ func updateTaskExec(ex dbExecer, id string, u TaskUpdate) error {
 	if u.Metadata != nil {
 		// A caller's metadata replaces the column but never the dispatcher's
 		// unit_run record: carry the stored one over, atomically, in this UPDATE.
-		setClauses = append(setClauses, `metadata = CASE
+		setClauses = append(setClauses, `metadata = json_patch(CASE
 			WHEN json_valid(metadata) AND json_extract(metadata, '$.unit_run') IS NOT NULL
 			THEN json_set(CASE WHEN json_valid(?) THEN ? ELSE '{}' END, '$.unit_run', json(json_extract(metadata, '$.unit_run')))
-			ELSE CASE WHEN json_valid(?) THEN json_remove(?, '$.unit_run') ELSE ? END END`)
+			ELSE CASE WHEN json_valid(?) THEN json_remove(?, '$.unit_run') ELSE ? END END,
+ COALESCE((SELECT json_object('workstream_id',canonical_id,'dispatch_workstream',json_object('key',logical_key,'id',canonical_id,'state',state,'last_error',last_error)) FROM dispatch_workstreams WHERE task_id=tasks.id AND active=1),'{}'))`)
 		args = append(args, *u.Metadata, *u.Metadata, *u.Metadata, *u.Metadata, *u.Metadata)
 	}
 	if u.UnitRun != nil {
-		setClauses = append(setClauses, "metadata = json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.unit_run', json(?))")
+		setClauses = append(setClauses, "metadata = json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.unit_run', json_patch(json(?), COALESCE((SELECT json_object('workstream_id',canonical_id) FROM dispatch_workstreams WHERE task_id=tasks.id AND active=1 AND canonical_id<>''),'{}')))")
 		args = append(args, *u.UnitRun)
 	}
 	if u.SprintID != nil {

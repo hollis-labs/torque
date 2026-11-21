@@ -61,8 +61,9 @@ type SchedulerStatus struct {
 // dispatches them to executors via a worker pool, and handles results
 // through the lifecycle manager.
 type Scheduler struct {
-	unitDispatch   func(ctx context.Context, task sqlstore.TaskRecord) (bool, error) // optional; see SetUnitDispatcher
-	sessionStopper func(ctx context.Context, tetherSessionID string) error           // optional; see SetSessionStopper
+	dispatchIdentity func(context.Context, *sqlstore.TaskRecord) error
+	unitDispatch     func(ctx context.Context, task sqlstore.TaskRecord) (bool, error) // optional; see SetUnitDispatcher
+	sessionStopper   func(ctx context.Context, tetherSessionID string) error           // optional; see SetSessionStopper
 	// unresolvedProfiles remembers, for unresolvedProfileTTL, the task
 	// profiles that resolved to no provider (TaskProfile -> expiry), so cost
 	// resolution does not re-log config's "profile not found" warning on every
@@ -224,6 +225,11 @@ func New(
 	})
 
 	return s
+}
+
+// SetDispatchIdentity installs a bounded Registry preparation hook at bootstrap.
+func (s *Scheduler) SetDispatchIdentity(fn func(context.Context, *sqlstore.TaskRecord) error) {
+	s.dispatchIdentity = fn
 }
 
 // SetUnitDispatcher routes picked tasks that carry an execution plan to fn
@@ -1099,6 +1105,11 @@ type runProfileSnapshot struct {
 }
 
 func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) (err error) {
+	if s.dispatchIdentity != nil {
+		if err := s.dispatchIdentity(ctx, &task); err != nil {
+			return err
+		}
+	}
 	// Trace per-task dispatch — the unit of work for "scheduler picked a task
 	// and tried to launch its run." Wraps the executor lookup, pre-dispatch
 	// validation, doing-transition, run-row insert, and worker enqueue.
@@ -1207,6 +1218,7 @@ func (s *Scheduler) dispatchTask(ctx context.Context, task sqlstore.TaskRecord) 
 
 		runID, err = tx.CreateRun(&sqlstore.RunRecord{
 			TaskID:          task.ID,
+			WorkstreamID:    sql.NullString{String: dispatchWorkstreamID(task), Valid: dispatchWorkstreamID(task) != ""},
 			Executor:        task.Executor,
 			Status:          "running",
 			ProfileSnapshot: profileSnapshotStr,
@@ -2196,4 +2208,13 @@ func formatSkipCounts(counts map[string]int) string {
 	}
 	b.WriteByte(']')
 	return b.String()
+}
+
+func dispatchWorkstreamID(task sqlstore.TaskRecord) string {
+	var meta map[string]any
+	if task.Metadata.Valid {
+		_ = json.Unmarshal([]byte(task.Metadata.String), &meta)
+	}
+	ws, _ := meta["workstream_id"].(string)
+	return ws
 }

@@ -188,6 +188,16 @@ func (s *Store) OutboxTrimBefore(ctx context.Context, cutoff time.Time) (int64, 
 		return 0, err
 	}
 	defer w.Rollback()
+	// The durable status writer must not lose an unacknowledged event to
+	// retention while an upstream is unavailable. Disabled installations have
+	// no cursor and retain the existing trim policy.
+	var statusCursor sql.NullInt64
+	if err := w.tx.QueryRow(`SELECT MIN(last_seq) FROM event_outbox_cursors WHERE consumer='tesseract-status-v1'`).Scan(&statusCursor); err != nil {
+		return 0, err
+	}
+	if statusCursor.Valid && statusCursor.Int64 < maxSeq.Int64 {
+		maxSeq.Int64 = statusCursor.Int64
+	}
 	res, err := w.tx.Exec(`DELETE FROM event_outbox WHERE seq <= ?`, maxSeq.Int64)
 	if err != nil {
 		return 0, err

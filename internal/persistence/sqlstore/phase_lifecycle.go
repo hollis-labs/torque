@@ -52,17 +52,17 @@ type phaseProgress struct {
 // sprint, and its plan and phase from the plan_phases records. A plan task is
 // its own plan. Missing is allowed; wrong is not.
 func (w *WriteTx) taskScope(id string) (stateScope, error) {
-	var project, epic, sprint, parent, phase sql.NullString
+	var project, epic, sprint, parent, phase, ws sql.NullString
 	var kind string
 	if err := w.tx.QueryRow(
-		`SELECT project_id, epic_id, sprint_id, parent_id, phase_id, kind FROM tasks WHERE id = ?`, id,
-	).Scan(&project, &epic, &sprint, &parent, &phase, &kind); err != nil {
+		`SELECT project_id, epic_id, sprint_id, parent_id, phase_id, kind, json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.dispatch_workstream.id') FROM tasks WHERE id = ?`, id,
+	).Scan(&project, &epic, &sprint, &parent, &phase, &kind, &ws); err != nil {
 		if err == sql.ErrNoRows {
 			return stateScope{}, fmt.Errorf("task %s not found", id)
 		}
 		return stateScope{}, err
 	}
-	scope := stateScope{ProjectID: project.String, EpicID: epic.String, SprintID: sprint.String, TaskID: id}
+	scope := stateScope{ProjectID: project.String, EpicID: epic.String, SprintID: sprint.String, TaskID: id, WorkstreamID: ws.String}
 	switch {
 	case kind == "plan":
 		scope.PlanID = id

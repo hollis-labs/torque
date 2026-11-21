@@ -77,9 +77,11 @@ func DefaultUnitPins() UnitPins {
 
 // UnitConfig tunes the dispatcher.
 type UnitConfig struct {
-	PollInterval   time.Duration // run-state poll; default 15s
-	DefaultTimeout time.Duration // run lifetime when the plan sets none; default 4h
-	Grace          time.Duration // wait past the deadline for Tether's own reaper before dissolving; default 2m
+	DefaultProject        string        // optional local Torque project ID for unassigned units
+	RegistryLaunchContext bool          // enable only after Tether accepts launch task/workstream IDs
+	PollInterval          time.Duration // run-state poll; default 15s
+	DefaultTimeout        time.Duration // run lifetime when the plan sets none; default 4h
+	Grace                 time.Duration // wait past the deadline for Tether's own reaper before dissolving; default 2m
 	// ResultGrace is how long a RESULT: comment may sit with the run still
 	// live before Torque dissolves the run itself and finishes the task; default 2m.
 	ResultGrace time.Duration
@@ -104,7 +106,7 @@ type UnitConfig struct {
 // TORQUE_UNIT_MAX_ACTIVE, TORQUE_UNIT_WORKER_POOL (comma-separated URNs) and
 // TORQUE_UNIT_PINS (JSON overriding DefaultUnitPins).
 func UnitConfigFromEnv() UnitConfig {
-	cfg := UnitConfig{Pins: DefaultUnitPins()}
+	cfg := UnitConfig{Pins: DefaultUnitPins(), DefaultProject: os.Getenv("TORQUE_UNIT_DEFAULT_PROJECT"), RegistryLaunchContext: strings.EqualFold(os.Getenv("TORQUE_UNIT_REGISTRY_LAUNCH_CONTEXT"), "true")}
 	if d, err := time.ParseDuration(os.Getenv("TORQUE_UNIT_POLL")); err == nil && d > 0 {
 		cfg.PollInterval = d
 	}
@@ -133,15 +135,21 @@ func UnitConfigFromEnv() UnitConfig {
 // UnitRun is the dispatcher's record on the task (metadata.unit_run). Only the
 // dispatcher writes it; a caller's metadata update keeps the stored value.
 type UnitRun struct {
-	RunID         string `json:"run_id,omitempty"`
-	Attempt       int    `json:"attempt"`
-	State         string `json:"state"`
-	Key           string `json:"key"`
-	Workers       int    `json:"workers"`
-	WorkerRuntime string `json:"worker_runtime"`
-	StartedAt     string `json:"started_at,omitempty"`
-	Deadline      string `json:"deadline,omitempty"`
-	Reason        string `json:"reason,omitempty"`
+	RunID               string `json:"run_id,omitempty"`
+	WorkstreamID        string `json:"workstream_id,omitempty"`
+	WorkstreamKey       string `json:"workstream_key,omitempty"`
+	WorkstreamProjectID string `json:"workstream_project_id,omitempty"`
+	ResultObserved      bool   `json:"result_observed,omitempty"`
+	ResultState         string `json:"result_state,omitempty"`
+	Dissolved           bool   `json:"dissolved,omitempty"`
+	Attempt             int    `json:"attempt"`
+	State               string `json:"state"`
+	Key                 string `json:"key"`
+	Workers             int    `json:"workers"`
+	WorkerRuntime       string `json:"worker_runtime"`
+	StartedAt           string `json:"started_at,omitempty"`
+	Deadline            string `json:"deadline,omitempty"`
+	Reason              string `json:"reason,omitempty"`
 	// Ambiguous: a formation call failed in a way that does not prove nothing
 	// formed. The next dispatch replays the same key to learn the run id.
 	Ambiguous bool `json:"ambiguous,omitempty"`
@@ -193,9 +201,10 @@ type UnitService struct {
 	task    *TaskService
 	comment *CommentService
 
-	teams  UnitTeams
-	cfg    UnitConfig
-	notify func(taskID, reason string)
+	identity *DispatchSync
+	teams    UnitTeams
+	cfg      UnitConfig
+	notify   func(taskID, reason string)
 
 	mu       sync.Mutex
 	inflight map[string]chan struct{} // task id -> closed when its dispatch ends
@@ -248,6 +257,9 @@ func (u *UnitService) Configure(teams UnitTeams, cfg UnitConfig) {
 	}
 	u.teams, u.cfg = teams, cfg
 }
+
+// SetDispatchSync installs the shared Registry/status integration at bootstrap.
+func (u *UnitService) SetDispatchSync(d *DispatchSync) { u.identity = d }
 
 // SetNotifier installs the hook called when a notify-on-done unit completes
 // (the same "task.notify" event the executor path publishes).
@@ -401,6 +413,18 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 		return nil, fmt.Errorf("%w: %d units in flight, limit %d (TORQUE_UNIT_MAX_ACTIVE)", ErrUnitCapacity, n, u.cfg.MaxActive)
 	}
 
+	if t.ProjectID.String == "" && u.cfg.DefaultProject != "" {
+		if _, err := u.store.GetProject(u.cfg.DefaultProject); err != nil {
+			return nil, &ValidationError{Field: "TORQUE_UNIT_DEFAULT_PROJECT", Message: "configured project does not exist"}
+		}
+		if err := u.store.AssignDefaultTaskProject(u.baseCtx, t.ID, u.cfg.DefaultProject); err != nil {
+			return nil, err
+		}
+		t, err = u.task.Get(t.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	at := &unitAttempt{task: t, plan: plan}
 	if hadRun && prev.RunID != "" && prev.Unconfirmed && prev.State != UnitUnconfirmed {
 		p := prev
@@ -432,6 +456,7 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 	at.run = UnitRun{
 		Attempt: attempt, State: UnitForming, Key: fmt.Sprintf("torque-unit-%s-a%d", t.ID, attempt),
 		Workers: int(plan.Workers), WorkerRuntime: plan.WorkerRuntime, Ambiguous: at.ambiguous,
+		WorkstreamKey: plan.WorkstreamID, WorkstreamProjectID: t.ProjectID.String,
 		Replays: carry.Replays, AmbiguousSince: carry.AmbiguousSince,
 		StartedAt: started.Format(time.RFC3339), Deadline: started.Add(timeout).Format(time.RFC3339),
 	}
@@ -442,6 +467,10 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 		// Legacy forming records have no snapshot: retain their original catalog
 		// selection rather than introducing a new host under an existing key.
 		at.run.Placement, at.run.Formation = prev.Placement, prev.Formation
+		at.run.WorkstreamID = prev.WorkstreamID
+		if prev.WorkstreamKey != "" {
+			at.run.WorkstreamKey, at.run.WorkstreamProjectID = prev.WorkstreamKey, prev.WorkstreamProjectID
+		}
 		if prev.Formation != nil {
 			at.run.Workers, at.run.WorkerRuntime = prev.Workers, prev.WorkerRuntime
 			at.run.StartedAt, at.run.Deadline = prev.StartedAt, prev.Deadline
@@ -453,6 +482,11 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 		}
 	}
 	if at.confirm == nil && at.settle == nil {
+		if u.identity != nil {
+			if err := u.identity.reserve(u.baseCtx, t, at.run.WorkstreamKey, at.run.WorkstreamProjectID); err != nil {
+				return nil, err
+			}
+		}
 		if err := u.saveRun(t.ID, at.run, sqlstore.TaskUpdate{}); err != nil {
 			return nil, fmt.Errorf("unit dispatch: record attempt: %w", err)
 		}
@@ -531,10 +565,29 @@ func (u *UnitService) run(at *unitAttempt) (*UnitDispatchResult, error) {
 		}
 	}
 
+	if u.identity != nil {
+		if err := u.identity.prepare(u.baseCtx, t, run.WorkstreamKey, run.WorkstreamProjectID); err != nil {
+			return nil, u.failDispatch(t.ID, run, "Registry workstream refused", err, "")
+		}
+		if r, err := u.store.DispatchWorkstream(u.baseCtx, t.ID); err == nil {
+			run.WorkstreamID = r.ID
+		}
+		if run.WorkstreamID != "" {
+			plan.WorkstreamID = run.WorkstreamID
+		}
+	}
 	formation := run.Formation
 	if formation == nil {
 		legacy := u.buildForm(t.ID, run.Attempt, plan, plan.TimeoutDuration(u.cfg.DefaultTimeout))
 		formation = &legacy
+	}
+	if u.cfg.RegistryLaunchContext && !run.Ambiguous {
+		formation.Launch.TaskID = t.ID
+		formation.Launch.WorkstreamID = run.WorkstreamID
+	}
+	run.Formation = formation
+	if err := u.saveRun(t.ID, run, sqlstore.TaskUpdate{}); err != nil {
+		return nil, err
 	}
 	res, err := u.form(run, *formation)
 	if err != nil {
@@ -646,6 +699,7 @@ func (u *UnitService) failDispatch(taskID string, run UnitRun, what string, caus
 			run.Unconfirmed = true
 		} else {
 			reason += fmt.Sprintf(" (run %s dissolved)", runID)
+			run.Dissolved = true
 		}
 	}
 	run.State, run.Reason, run.Ambiguous = UnitFailed, reason, false
@@ -912,6 +966,8 @@ func (u *UnitService) closeRun(taskID, runID string, ended, timedOut bool) {
 	}
 	result, _ := u.findResult(taskID, run)
 	run.State = UnitClosing
+	run.ResultObserved = result != ""
+	run.ResultState = unitResultState(result)
 	if err := u.saveRun(taskID, run, sqlstore.TaskUpdate{}); err != nil {
 		u.mu.Unlock()
 		log.Printf("[unit] %s: claim closing: %v", taskID, err)
@@ -934,6 +990,7 @@ func (u *UnitService) closeRun(taskID, runID string, ended, timedOut bool) {
 		return
 	}
 	run.Unconfirmed = derr != nil
+	run.Dissolved = derr == nil
 	switch {
 	case derr != nil:
 		u.blockLocked(t, run, fmt.Sprintf("team run %s could not be dissolved (%v); dissolve it by hand", runID, derr))
@@ -1008,6 +1065,7 @@ func (u *UnitService) abandon(taskID, runID, why string, toBlocked bool) {
 	}
 	run, _ := unitRunFrom(taskMetadata(t))
 	run.RunID, run.State, run.Reason, run.Unconfirmed = runID, UnitBlocked, reason, derr != nil
+	run.Dissolved = derr == nil
 	if toBlocked && t.Status == "doing" {
 		u.blockLocked(t, run, reason)
 		return
@@ -1044,4 +1102,37 @@ func (u *UnitService) findResult(taskID string, run UnitRun) (string, time.Time)
 		best, at = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(c.Content), marker)), c.CreatedAt
 	}
 	return best, at
+}
+
+// Explicit result prefixes override the legacy successful free-text result.
+// This classifies telemetry only; the existing task on_done policy stays intact.
+func unitResultState(result string) string {
+	text := strings.ToLower(strings.TrimSpace(result))
+	var structured struct {
+		State   string `json:"state"`
+		Status  string `json:"status"`
+		Outcome string `json:"outcome"`
+	}
+	if json.Unmarshal([]byte(result), &structured) == nil {
+		for _, s := range []string{structured.State, structured.Status, structured.Outcome} {
+			switch strings.ToLower(s) {
+			case "failed", "failure":
+				return "failed"
+			case "blocked", "partial":
+				return "blocked"
+			case "done", "success":
+				return "done"
+			}
+		}
+	}
+	first := strings.FieldsFunc(text, func(r rune) bool { return r == ' ' || r == ':' || r == '/' || r == '\n' || r == '—' })
+	if len(first) > 0 {
+		switch first[0] {
+		case "failed", "failure", "error":
+			return "failed"
+		case "blocked", "partial":
+			return "blocked"
+		}
+	}
+	return "done"
 }
