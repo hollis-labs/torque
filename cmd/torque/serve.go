@@ -243,13 +243,24 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	sched.SetLandingEvaluator(svc.Task.LandingEvaluate)
 	svc.Workstream.SetGo(sched.Enabled)
 	dispatchSyncConfig := service.DispatchSyncConfigFromEnv()
-	if dispatchSyncConfig.RegistryURL != "" || dispatchSyncConfig.TesseractURL != "" {
+	// Ops system of record (CW-20261121-0146/0147/0148): TORQUE_OPS_URL links tasks
+	// to Ops items and sends task status to the Ops service.
+	opsSync, err := service.NewOpsSync(store, service.OpsSyncConfigFromEnv())
+	if err != nil {
+		return err
+	}
+	if dispatchSyncConfig.RegistryURL != "" || dispatchSyncConfig.TesseractURL != "" || opsSync.Enabled() {
 		dispatchSync, err := service.NewDispatchSync(store, dispatchSyncConfig)
 		if err != nil {
 			return err
 		}
+		dispatchSync.SetOps(opsSync)
 		dispatchCtx, dispatchCancel := context.WithCancel(context.Background())
 		defer dispatchCancel()
+		if err := opsSync.Start(dispatchCtx); err != nil {
+			return err
+		}
+		defer opsSync.Stop()
 		if err := dispatchSync.Start(dispatchCtx); err != nil {
 			return err
 		}

@@ -55,6 +55,33 @@ type DispatchSync struct {
 	tickMu sync.Mutex
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	// ops, when enabled, links tasks to Ops items before Registry ensure and
+	// receives task status (ops/v2 contract) instead of direct Tesseract writes.
+	ops *OpsSync
+}
+
+// linkOps links t to its Ops item with a bounded inline intake and refreshes t.
+// It never fails a dispatch.
+func (d *DispatchSync) linkOps(ctx context.Context, t *sqlstore.TaskRecord) {
+	lctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if _, e := d.ops.Link(lctx, t.ID, true); e != nil && !errors.Is(e, errOpsUnavailable) {
+		log.Printf("[ops-sync] link %s: %v", t.ID, e)
+	}
+	if fresh, e := d.store.GetTask(t.ID); e == nil {
+		*t = *fresh
+	}
+}
+
+// SetOps installs the Ops service integration (CW-20261121-0146/0147).
+func (d *DispatchSync) SetOps(o *OpsSync) {
+	if d != nil && o.Enabled() {
+		d.ops = o
+	}
+}
+
+func (d *DispatchSync) statusEnabled() bool {
+	return d.cfg.TesseractURL != "" || d.ops.Enabled()
 }
 
 const statusConsumer = "tesseract-status-v1"
@@ -97,7 +124,7 @@ func (d *DispatchSync) Start(ctx context.Context) error {
 	if !d.store.OutboxSupported() {
 		return fmt.Errorf("dispatch integration requires the SQLite commit-ordered outbox")
 	}
-	if d.cfg.TesseractURL != "" {
+	if d.statusEnabled() {
 		w, e := d.store.BeginWriteTx(ctx)
 		if e != nil {
 			return e
@@ -159,7 +186,14 @@ func dispatchLogicalKey(t *sqlstore.TaskRecord) string {
 // returned task includes the committed stamp. Outages persist a pending mark
 // and allow dispatch; closed identities are a definite refusal, never reminted.
 func (d *DispatchSync) Prepare(ctx context.Context, t *sqlstore.TaskRecord) error {
-	if d == nil || d.cfg.RegistryURL == "" {
+	if d == nil {
+		return nil
+	}
+	if d.ops.Enabled() && d.cfg.RegistryURL == "" {
+		d.linkOps(ctx, t)
+		return nil
+	}
+	if d.cfg.RegistryURL == "" {
 		return nil
 	}
 	project := t.ProjectID.String
@@ -179,6 +213,17 @@ func (d *DispatchSync) Prepare(ctx context.Context, t *sqlstore.TaskRecord) erro
 			*t = *fresh
 			project = t.ProjectID.String
 		}
+	}
+	if d.ops.Enabled() {
+		// G1: the Registry key is the Ops item id (design 2.5). Link first
+		// (inherit, else one bounded intake); a task still without an item is
+		// dispatched without a Registry binding and bound when the intake lands.
+		d.linkOps(ctx, t)
+		key := OpsIDOf(t)
+		if key == "" {
+			return nil
+		}
+		return d.prepare(ctx, t, key, project)
 	}
 	return d.prepare(ctx, t, dispatchLogicalKey(t), project)
 }
@@ -329,7 +374,7 @@ func (d *DispatchSync) Tick(ctx context.Context) error {
 			}
 		}
 	}
-	if d.cfg.TesseractURL == "" {
+	if !d.statusEnabled() {
 		return nil
 	}
 	after, e := d.store.OutboxCursorLoad(ctx, statusConsumer)
@@ -388,6 +433,16 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 		if err != nil {
 			return err
 		}
+		var probe struct {
+			Namespace string `json:"namespace"`
+		}
+		_ = json.Unmarshal(raw, &probe)
+		if probe.Namespace == "" && d.ops.Enabled() {
+			return d.ops.postStatus(ctx, raw)
+		}
+		if d.cfg.TesseractURL == "" {
+			return nil // sealed for direct Tesseract before the Ops cutover; Ops now owns the stream
+		}
 		_, err = d.post(ctx, d.cfg.TesseractURL, "/v1/event/write", d.cfg.TesseractTokenFile, "torque-status-"+ev.ID, json.RawMessage(raw), nil)
 		return err
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -395,6 +450,9 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 	}
 	if ev.Scope == nil || ev.Scope.TaskID == "" {
 		return nil
+	}
+	if d.ops.Enabled() {
+		return d.deliverOps(ctx, entry)
 	}
 	var p struct {
 		State        string `json:"state"`
