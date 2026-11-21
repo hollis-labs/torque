@@ -5,6 +5,8 @@ CREATE TABLE dispatch_workstreams (
     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     logical_key TEXT NOT NULL,
     project_id TEXT NOT NULL DEFAULT '',
+    registry_project TEXT NOT NULL DEFAULT '',
+    namespace_project TEXT NOT NULL DEFAULT 'agent-os',
     canonical_id TEXT NOT NULL DEFAULT '',
     state TEXT NOT NULL DEFAULT 'pending',
     active INTEGER NOT NULL DEFAULT 1,

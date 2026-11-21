@@ -55,6 +55,8 @@ type TeamForm struct {
 
 // TeamLaunch carries formation options.
 type TeamLaunch struct {
+	TaskID         string              `json:"task_id,omitempty"`
+	WorkstreamID   string              `json:"workstream_id,omitempty"`
 	Counts         map[string]int      `json:"counts,omitempty"`
 	PoolIdentities map[string][]string `json:"pool_identities,omitempty"`
 }

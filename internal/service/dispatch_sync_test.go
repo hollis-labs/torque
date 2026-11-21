@@ -22,6 +22,7 @@ const registryID = "workstream:01M7VQE9DMDXCS0Z1MVA7045D6"
 const registryID2 = "workstream:01M7VQE9DMDXCS0Z1MVA7045D7"
 
 type identityFixture struct {
+	projectDomains                               []any
 	mu                                           sync.Mutex
 	registryDown, closed, statusDown, loseStatus bool
 	registryCalls                                int
@@ -45,6 +46,7 @@ func newIdentityFixture(t *testing.T) *identityFixture {
 		switch r.URL.Path {
 		case "/v1/workstreams/ensure":
 			f.registryCalls++
+			f.projectDomains = append(f.projectDomains, body["project_urns"])
 			f.registryKeys = append(f.registryKeys, r.Header.Get("Idempotency-Key"))
 			f.logicalKeys = append(f.logicalKeys, body["key"].(string))
 			require.NotEmpty(t, r.Header.Get("Idempotency-Key"))
@@ -66,6 +68,13 @@ func newIdentityFixture(t *testing.T) *identityFixture {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "created": f.registryCalls == 1, "version_token": "v1"})
 		case "/v1/event/write":
+			cs := body["consumer_state"].(map[string]any)
+			require.Contains(t, []string{"started", "progress", "blocked", "review", "done", "failed", "cancelled", "note"}, cs["state"])
+			require.Contains(t, cs, "task_id")
+			require.Contains(t, cs, "run_id")
+			require.NotEmpty(t, cs["workstream_key"])
+			require.IsType(t, "", body["body"])
+
 			f.bodies = append(f.bodies, body)
 			key := body["idempotency_key"].(string)
 			require.Equal(t, key, r.Header.Get("Idempotency-Key"))
@@ -93,7 +102,7 @@ func newIdentityFixture(t *testing.T) *identityFixture {
 	return f
 }
 func (f *identityFixture) config() service.DispatchSyncConfig {
-	return service.DispatchSyncConfig{RegistryURL: f.srv.URL, RegistryTokenFile: f.file, TesseractURL: f.srv.URL, TesseractTokenFile: f.file, Project: "test", PollInterval: time.Hour, Timeout: time.Second}
+	return service.DispatchSyncConfig{RegistryURL: f.srv.URL, RegistryTokenFile: f.file, TesseractURL: f.srv.URL, TesseractTokenFile: f.file, PollInterval: time.Hour, Timeout: time.Second}
 }
 func (f *identityFixture) set(fn func()) { f.mu.Lock(); defer f.mu.Unlock(); fn() }
 func (f *identityFixture) events() []map[string]any {
@@ -207,7 +216,7 @@ func TestDispatchStatusUnitLifecycleAndAcceptedLostResponse(t *testing.T) {
 	require.NoError(t, d2.Tick(context.Background()))
 	states := map[string]int{}
 	for _, body := range f.events() {
-		require.Equal(t, "project/test/event/status", body["namespace"])
+		require.Equal(t, "project/agent-os/event/status", body["namespace"])
 		require.Equal(t, registryID, body["workstream_id"])
 		data := body["data"].(map[string]any)
 		require.Equal(t, id, data["task_id"])
@@ -216,7 +225,7 @@ func TestDispatchStatusUnitLifecycleAndAcceptedLostResponse(t *testing.T) {
 		require.Equal(t, "torque-dispatcher", body["author"].(map[string]any)["agent_id"])
 		states[body["consumer_state"].(map[string]any)["state"].(string)]++
 	}
-	require.Equal(t, map[string]int{"dispatched": 1, "formed": 1, "running": 1, "RESULT": 1, "dissolved": 1, "review": 1}, states)
+	require.Equal(t, map[string]int{"started": 2, "progress": 1, "done": 1, "note": 1, "review": 1}, states)
 }
 func TestDispatchStatusExecutorTransitionsAndRetry(t *testing.T) {
 	svc := setupService(t)
@@ -243,7 +252,7 @@ func TestDispatchStatusExecutorTransitionsAndRetry(t *testing.T) {
 		states[state]++
 		require.Equal(t, registryID, body["workstream_id"])
 	}
-	require.Equal(t, map[string]int{"dispatched": 1, "running": 1, "failed": 1, "blocked": 1, "review": 1, "done": 1}, states)
+	require.Equal(t, map[string]int{"started": 1, "progress": 1, "failed": 1, "blocked": 1, "review": 1, "done": 1}, states)
 }
 func TestDispatchStatusOutageEventsKeepOriginalIdentityAfterPlanChanges(t *testing.T) {
 	svc := setupService(t)
@@ -413,7 +422,7 @@ func TestDispatchUnitReattemptPreservesEachRunIdentity(t *testing.T) {
 	require.NoError(t, d.Tick(context.Background()))
 	dispatched := map[string]bool{}
 	for _, body := range f.events() {
-		if body["consumer_state"].(map[string]any)["state"] == "dispatched" {
+		if body["data"].(map[string]any)["transition"] == "dispatched" {
 			dispatched[body["data"].(map[string]any)["run_id"].(string)] = true
 		}
 	}
@@ -441,4 +450,203 @@ func TestDispatchAmbiguousReplayKeepsWorkstreamKey(t *testing.T) {
 	defer f.mu.Unlock()
 	require.Equal(t, []string{"ws-7", "ws-7"}, f.logicalKeys)
 	require.Equal(t, registryID, taskMeta(t, svc, id)["workstream_id"])
+}
+
+func TestDispatchClosedBindingStickyAcrossOutageAndRestart(t *testing.T) {
+	svc := setupService(t)
+	f := newIdentityFixture(t)
+	d := syncFixture(t, svc, f)
+	rec, e := svc.Task.Create(service.TaskCreateInput{Title: "closed"})
+	require.NoError(t, e)
+	f.set(func() { f.closed = true })
+	require.ErrorIs(t, d.Prepare(context.Background(), rec), service.ErrWorkstreamClosed)
+	f.set(func() { f.closed = false; f.registryDown = true })
+	require.ErrorIs(t, d.Prepare(context.Background(), rec), service.ErrWorkstreamClosed)
+	require.NoError(t, os.WriteFile(f.file, nil, 0600))
+	restarted, e := service.NewDispatchSync(svc.Store(), f.config())
+	require.NoError(t, e)
+	require.ErrorIs(t, restarted.Prepare(context.Background(), rec), service.ErrWorkstreamClosed)
+	f.mu.Lock()
+	require.Equal(t, 1, f.registryCalls)
+	f.mu.Unlock()
+	require.Equal(t, "closed", taskMeta(t, svc, rec.ID)["dispatch_workstream"].(map[string]any)["state"])
+	require.NoError(t, os.WriteFile(f.file, []byte("test-credential"), 0600))
+	f.set(func() { f.registryDown = false })
+	raw := sql.NullString{String: `{"workstream_key":"new-key"}`, Valid: true}
+	require.NoError(t, svc.Task.Update(rec.ID, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{Metadata: &raw}}))
+	rec, e = svc.Task.Get(rec.ID)
+	require.NoError(t, e)
+	require.NoError(t, restarted.Prepare(context.Background(), rec))
+	require.Equal(t, registryID2, taskMeta(t, svc, rec.ID)["workstream_id"])
+}
+func TestDispatchCanonicalProjectDomainAndSlug(t *testing.T) {
+	svc := setupService(t)
+	require.NoError(t, svc.Feature.Enable("projects"))
+	p, _, e := svc.Store().CreateProjectByReference(&sqlstore.ProjectRecord{Name: "Tether Display Name", ExternalAuthority: "registry", ExternalID: "project:tether"})
+	require.NoError(t, e)
+	f := newIdentityFixture(t)
+	d := syncFixture(t, svc, f)
+	rec, e := svc.Task.Create(service.TaskCreateInput{Title: "mapped project", ProjectID: p.ID})
+	require.NoError(t, e)
+	require.NoError(t, d.Prepare(context.Background(), rec))
+	require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, "blocked"))
+	require.NoError(t, d.Tick(context.Background()))
+	f.mu.Lock()
+	require.Equal(t, []any{"project:tether"}, f.projectDomains[0])
+	require.NotEqual(t, p.ID, "project:tether")
+	f.mu.Unlock()
+	require.Equal(t, "project/tether/event/status", f.events()[0]["namespace"])
+	// A local project with no Registry mapping must not mint in a PRJ-* domain.
+	local := &sqlstore.ProjectRecord{ID: "PRJ-UNMAPPED", Name: "local-only"}
+	require.NoError(t, svc.Store().CreateProject(local))
+	other, e := svc.Task.Create(service.TaskCreateInput{Title: "unmapped", ProjectID: local.ID})
+	require.NoError(t, e)
+	require.NoError(t, d.Prepare(context.Background(), other))
+	require.Equal(t, "project_unmapped", taskMeta(t, svc, other.ID)["dispatch_workstream"].(map[string]any)["last_error"])
+	f.mu.Lock()
+	require.Equal(t, 1, f.registryCalls)
+	f.mu.Unlock()
+}
+func TestDispatchUnitDefaultProjectAndGatedLaunchContext(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			fake := newFake()
+			svc := unitSetup(t, fake, service.UnitConfig{DefaultProject: "PRJ-20261120-0001", RegistryLaunchContext: enabled})
+			require.NoError(t, svc.Store().CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-20261120-0001", Name: "Agent OS", ExternalAuthority: "registry", ExternalID: "project:agent-os"}))
+			f := newIdentityFixture(t)
+			d := syncFixture(t, svc, f)
+			svc.Unit.SetDispatchSync(d)
+			id := newUnitTask(t, svc, nil)
+			_, e := svc.Unit.Dispatch(context.Background(), service.UnitDispatchInput{TaskID: id})
+			require.NoError(t, e)
+			rec, e := svc.Task.Get(id)
+			require.NoError(t, e)
+			require.Equal(t, "PRJ-20261120-0001", rec.ProjectID.String)
+			fake.mu.Lock()
+			formation := fake.formRequests[0]
+			fake.mu.Unlock()
+			raw, e := json.Marshal(formation)
+			require.NoError(t, e)
+			var body map[string]any
+			require.NoError(t, json.Unmarshal(raw, &body))
+			launch := body["launch"].(map[string]any)
+			if enabled {
+				require.Equal(t, id, launch["task_id"])
+				require.Equal(t, registryID, launch["workstream_id"])
+			} else {
+				require.NotContains(t, launch, "task_id")
+				require.NotContains(t, launch, "workstream_id")
+			}
+			f.mu.Lock()
+			require.Equal(t, []any{"project:agent-os"}, f.projectDomains[0])
+			f.mu.Unlock()
+		})
+	}
+}
+func TestDispatchUnitResultUsesClosedVocabulary(t *testing.T) {
+	for _, tc := range []struct{ text, state string }{{"DONE: shipped", "done"}, {"FAILED: build failed", "failed"}, {"BLOCKED: missing dependency", "blocked"}, {`{"status":"failed"}`, "failed"}} {
+		t.Run(tc.text, func(t *testing.T) {
+			fake := newFake()
+			svc := unitSetup(t, fake, service.UnitConfig{})
+			f := newIdentityFixture(t)
+			d := syncFixture(t, svc, f)
+			svc.Unit.SetDispatchSync(d)
+			id := newUnitTask(t, svc, nil)
+			run, e := svc.Unit.Dispatch(context.Background(), service.UnitDispatchInput{TaskID: id})
+			require.NoError(t, e)
+			_, e = svc.Comment.AddForTask(id, "orchestrator", "RESULT "+run.RunID+": "+tc.text)
+			require.NoError(t, e)
+			fake.set(func() { fake.ended = true })
+			waitFor(t, "result", func() bool { r, _ := svc.Task.Get(id); return r.Status == "review" })
+			require.NoError(t, d.Tick(context.Background()))
+			found := false
+			for _, body := range f.events() {
+				if body["data"].(map[string]any)["transition"] == "RESULT" {
+					cs := body["consumer_state"].(map[string]any)
+					require.Equal(t, tc.state, cs["state"])
+					require.Equal(t, id, cs["task_id"])
+					require.Equal(t, run.RunID, cs["run_id"])
+					require.Equal(t, run.RunID, cs["team_id"])
+					require.Equal(t, "ws-7", cs["workstream_key"])
+					found = true
+				}
+			}
+			require.True(t, found)
+		})
+	}
+}
+func TestDispatchStatusWaitsForFormedRunBeforeSealing(t *testing.T) {
+	fake := newFake()
+	svc := unitSetup(t, fake, service.UnitConfig{})
+	f := newIdentityFixture(t)
+	d := syncFixture(t, svc, f)
+	svc.Unit.SetDispatchSync(d)
+	id := newUnitTask(t, svc, nil)
+	entered, release := make(chan struct{}), make(chan struct{})
+	fake.onForm = func() { close(entered); <-release }
+	finished := make(chan *service.UnitDispatchResult, 1)
+	fail := make(chan error, 1)
+	go func() {
+		run, e := svc.Unit.Dispatch(context.Background(), service.UnitDispatchInput{TaskID: id})
+		finished <- run
+		fail <- e
+	}()
+	<-entered
+	require.ErrorContains(t, d.Tick(context.Background()), "awaiting team run id")
+	require.Empty(t, f.events())
+	var sealed int
+	require.NoError(t, svc.Store().ReadDB().QueryRow(`SELECT COUNT(*) FROM dispatch_status_payloads`).Scan(&sealed))
+	require.Zero(t, sealed)
+	close(release)
+	run := <-finished
+	require.NoError(t, <-fail)
+	require.NoError(t, d.Tick(context.Background()))
+	for _, body := range f.events() {
+		require.Equal(t, run.RunID, body["consumer_state"].(map[string]any)["run_id"])
+	}
+}
+
+func TestDispatchRepeatedStatesHaveDistinctTransitionKeys(t *testing.T) {
+	svc := setupService(t)
+	f := newIdentityFixture(t)
+	d := syncFixture(t, svc, f)
+	rec, e := svc.Task.Create(service.TaskCreateInput{Title: "repeated transitions"})
+	require.NoError(t, e)
+	require.NoError(t, d.Prepare(context.Background(), rec))
+	for _, state := range []string{"blocked", "doing", "blocked", "doing", "cancelled"} {
+		require.NoError(t, svc.Task.Transition(context.Background(), rec.ID, state))
+	}
+	require.NoError(t, d.Tick(context.Background()))
+	require.Len(t, f.events(), 5)
+	counts := map[string]int{}
+	for _, body := range f.events() {
+		counts[body["consumer_state"].(map[string]any)["state"].(string)]++
+	}
+	require.Equal(t, map[string]int{"blocked": 2, "started": 2, "cancelled": 1}, counts)
+}
+func TestDispatchUnitConfigReadsDefaultAndWireGate(t *testing.T) {
+	t.Setenv("TORQUE_UNIT_DEFAULT_PROJECT", "PRJ-20261120-0001")
+	t.Setenv("TORQUE_UNIT_REGISTRY_LAUNCH_CONTEXT", "true")
+	cfg := service.UnitConfigFromEnv()
+	require.Equal(t, "PRJ-20261120-0001", cfg.DefaultProject)
+	require.True(t, cfg.RegistryLaunchContext)
+}
+
+func TestDispatchClosedLedgerRejectsStalePendingSave(t *testing.T) {
+	svc := setupService(t)
+	f := newIdentityFixture(t)
+	d := syncFixture(t, svc, f)
+	rec, e := svc.Task.Create(service.TaskCreateInput{Title: "stale binding"})
+	require.NoError(t, e)
+	require.NoError(t, d.Prepare(context.Background(), rec))
+	old, e := svc.Store().DispatchWorkstream(context.Background(), rec.ID)
+	require.NoError(t, e)
+	closed := old
+	closed.State = "closed"
+	closed.LastError = "workstream_closed"
+	require.NoError(t, svc.Store().SaveDispatchWorkstream(context.Background(), closed))
+	old.State = "pending"
+	old.LastError = "unavailable"
+	require.ErrorIs(t, svc.Store().SaveDispatchWorkstream(context.Background(), old), sqlstore.ErrDispatchWorkstreamClosed)
+	require.Equal(t, "closed", taskMeta(t, svc, rec.ID)["dispatch_workstream"].(map[string]any)["state"])
 }

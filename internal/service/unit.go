@@ -77,9 +77,11 @@ func DefaultUnitPins() UnitPins {
 
 // UnitConfig tunes the dispatcher.
 type UnitConfig struct {
-	PollInterval   time.Duration // run-state poll; default 15s
-	DefaultTimeout time.Duration // run lifetime when the plan sets none; default 4h
-	Grace          time.Duration // wait past the deadline for Tether's own reaper before dissolving; default 2m
+	DefaultProject        string        // optional local Torque project ID for unassigned units
+	RegistryLaunchContext bool          // enable only after Tether accepts launch task/workstream IDs
+	PollInterval          time.Duration // run-state poll; default 15s
+	DefaultTimeout        time.Duration // run lifetime when the plan sets none; default 4h
+	Grace                 time.Duration // wait past the deadline for Tether's own reaper before dissolving; default 2m
 	// ResultGrace is how long a RESULT: comment may sit with the run still
 	// live before Torque dissolves the run itself and finishes the task; default 2m.
 	ResultGrace time.Duration
@@ -104,7 +106,7 @@ type UnitConfig struct {
 // TORQUE_UNIT_MAX_ACTIVE, TORQUE_UNIT_WORKER_POOL (comma-separated URNs) and
 // TORQUE_UNIT_PINS (JSON overriding DefaultUnitPins).
 func UnitConfigFromEnv() UnitConfig {
-	cfg := UnitConfig{Pins: DefaultUnitPins()}
+	cfg := UnitConfig{Pins: DefaultUnitPins(), DefaultProject: os.Getenv("TORQUE_UNIT_DEFAULT_PROJECT"), RegistryLaunchContext: strings.EqualFold(os.Getenv("TORQUE_UNIT_REGISTRY_LAUNCH_CONTEXT"), "true")}
 	if d, err := time.ParseDuration(os.Getenv("TORQUE_UNIT_POLL")); err == nil && d > 0 {
 		cfg.PollInterval = d
 	}
@@ -138,6 +140,7 @@ type UnitRun struct {
 	WorkstreamKey       string `json:"workstream_key,omitempty"`
 	WorkstreamProjectID string `json:"workstream_project_id,omitempty"`
 	ResultObserved      bool   `json:"result_observed,omitempty"`
+	ResultState         string `json:"result_state,omitempty"`
 	Dissolved           bool   `json:"dissolved,omitempty"`
 	Attempt             int    `json:"attempt"`
 	State               string `json:"state"`
@@ -410,6 +413,18 @@ func (u *UnitService) begin(in UnitDispatchInput) (*unitAttempt, error) {
 		return nil, fmt.Errorf("%w: %d units in flight, limit %d (TORQUE_UNIT_MAX_ACTIVE)", ErrUnitCapacity, n, u.cfg.MaxActive)
 	}
 
+	if t.ProjectID.String == "" && u.cfg.DefaultProject != "" {
+		if _, err := u.store.GetProject(u.cfg.DefaultProject); err != nil {
+			return nil, &ValidationError{Field: "TORQUE_UNIT_DEFAULT_PROJECT", Message: "configured project does not exist"}
+		}
+		if err := u.store.AssignDefaultTaskProject(u.baseCtx, t.ID, u.cfg.DefaultProject); err != nil {
+			return nil, err
+		}
+		t, err = u.task.Get(t.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	at := &unitAttempt{task: t, plan: plan}
 	if hadRun && prev.RunID != "" && prev.Unconfirmed && prev.State != UnitUnconfirmed {
 		p := prev
@@ -565,6 +580,10 @@ func (u *UnitService) run(at *unitAttempt) (*UnitDispatchResult, error) {
 	if formation == nil {
 		legacy := u.buildForm(t.ID, run.Attempt, plan, plan.TimeoutDuration(u.cfg.DefaultTimeout))
 		formation = &legacy
+	}
+	if u.cfg.RegistryLaunchContext && !run.Ambiguous {
+		formation.Launch.TaskID = t.ID
+		formation.Launch.WorkstreamID = run.WorkstreamID
 	}
 	run.Formation = formation
 	if err := u.saveRun(t.ID, run, sqlstore.TaskUpdate{}); err != nil {
@@ -948,6 +967,7 @@ func (u *UnitService) closeRun(taskID, runID string, ended, timedOut bool) {
 	result, _ := u.findResult(taskID, run)
 	run.State = UnitClosing
 	run.ResultObserved = result != ""
+	run.ResultState = unitResultState(result)
 	if err := u.saveRun(taskID, run, sqlstore.TaskUpdate{}); err != nil {
 		u.mu.Unlock()
 		log.Printf("[unit] %s: claim closing: %v", taskID, err)
@@ -1082,4 +1102,37 @@ func (u *UnitService) findResult(taskID string, run UnitRun) (string, time.Time)
 		best, at = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(c.Content), marker)), c.CreatedAt
 	}
 	return best, at
+}
+
+// Explicit result prefixes override the legacy successful free-text result.
+// This classifies telemetry only; the existing task on_done policy stays intact.
+func unitResultState(result string) string {
+	text := strings.ToLower(strings.TrimSpace(result))
+	var structured struct {
+		State   string `json:"state"`
+		Status  string `json:"status"`
+		Outcome string `json:"outcome"`
+	}
+	if json.Unmarshal([]byte(result), &structured) == nil {
+		for _, s := range []string{structured.State, structured.Status, structured.Outcome} {
+			switch strings.ToLower(s) {
+			case "failed", "failure":
+				return "failed"
+			case "blocked", "partial":
+				return "blocked"
+			case "done", "success":
+				return "done"
+			}
+		}
+	}
+	first := strings.FieldsFunc(text, func(r rune) bool { return r == ' ' || r == ':' || r == '/' || r == '\n' || r == '—' })
+	if len(first) > 0 {
+		switch first[0] {
+		case "failed", "failure", "error":
+			return "failed"
+		case "blocked", "partial":
+			return "blocked"
+		}
+	}
+	return "done"
 }

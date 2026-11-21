@@ -3,18 +3,23 @@ package sqlstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
+var ErrDispatchWorkstreamClosed = errors.New("dispatch workstream binding is closed")
+
 // DispatchWorkstream is a Registry binding and its durable retry marker.
+// ProjectID is the local PRJ key; RegistryProject is the authority-scoped
+// project:slug domain; NamespaceProject is the sealed status namespace slug.
 type DispatchWorkstream struct {
-	TaskID, Key, ProjectID, ID, State, LastError string
-	Attempts                                     int
+	TaskID, Key, ProjectID, RegistryProject, NamespaceProject, ID, State, LastError string
+	Attempts                                                                        int
 }
 
 // ReserveDispatchWorkstream preserves the first successful binding for a logical
 // key. An explicitly changed plan key starts a new binding; retries do not.
-func (s *Store) ReserveDispatchWorkstream(ctx context.Context, taskID, key, project string) (DispatchWorkstream, error) {
+func (s *Store) ReserveDispatchWorkstream(ctx context.Context, taskID, key, project, registryProject, namespace string) (DispatchWorkstream, error) {
 	w, err := s.BeginWriteTx(ctx)
 	if err != nil {
 		return DispatchWorkstream{}, err
@@ -24,12 +29,14 @@ func (s *Store) ReserveDispatchWorkstream(ctx context.Context, taskID, key, proj
 	if err != nil {
 		return DispatchWorkstream{}, err
 	}
-	_, err = w.tx.Exec(`INSERT INTO dispatch_workstreams(task_id,logical_key,project_id) VALUES (?,?,?)
- ON CONFLICT(task_id,logical_key,project_id) DO UPDATE SET active=1`, taskID, key, project)
+	_, err = w.tx.Exec(`INSERT INTO dispatch_workstreams(task_id,logical_key,project_id,registry_project,namespace_project) VALUES (?,?,?,?,?)
+ ON CONFLICT(task_id,logical_key,project_id) DO UPDATE SET active=1,
+ registry_project=CASE WHEN dispatch_workstreams.registry_project='' AND dispatch_workstreams.canonical_id='' THEN excluded.registry_project ELSE dispatch_workstreams.registry_project END,
+ namespace_project=CASE WHEN dispatch_workstreams.registry_project='' AND dispatch_workstreams.canonical_id='' THEN excluded.namespace_project ELSE dispatch_workstreams.namespace_project END`, taskID, key, project, registryProject, namespace)
 	if err != nil {
 		return DispatchWorkstream{}, err
 	}
-	r, err := scanDispatchWorkstream(w.tx.QueryRow(`SELECT task_id,logical_key,project_id,canonical_id,state,attempts,last_error FROM dispatch_workstreams WHERE task_id=? AND active=1`, taskID))
+	r, err := scanDispatchWorkstream(w.tx.QueryRow(`SELECT task_id,logical_key,project_id,registry_project,namespace_project,canonical_id,state,attempts,last_error FROM dispatch_workstreams WHERE task_id=? AND active=1`, taskID))
 	if err != nil {
 		return r, err
 	}
@@ -40,14 +47,14 @@ func (s *Store) ReserveDispatchWorkstream(ctx context.Context, taskID, key, proj
 	return r, w.Commit()
 }
 func scanDispatchWorkstream(row interface{ Scan(...any) error }) (r DispatchWorkstream, err error) {
-	err = row.Scan(&r.TaskID, &r.Key, &r.ProjectID, &r.ID, &r.State, &r.Attempts, &r.LastError)
+	err = row.Scan(&r.TaskID, &r.Key, &r.ProjectID, &r.RegistryProject, &r.NamespaceProject, &r.ID, &r.State, &r.Attempts, &r.LastError)
 	return
 }
 func (s *Store) DispatchWorkstream(ctx context.Context, taskID string) (DispatchWorkstream, error) {
-	return scanDispatchWorkstream(s.ReadDB().QueryRowContext(ctx, `SELECT task_id,logical_key,project_id,canonical_id,state,attempts,last_error FROM dispatch_workstreams WHERE task_id=? AND active=1`, taskID))
+	return scanDispatchWorkstream(s.ReadDB().QueryRowContext(ctx, `SELECT task_id,logical_key,project_id,registry_project,namespace_project,canonical_id,state,attempts,last_error FROM dispatch_workstreams WHERE task_id=? AND active=1`, taskID))
 }
 func (s *Store) PendingDispatchWorkstreams(ctx context.Context) ([]DispatchWorkstream, error) {
-	rows, err := s.ReadDB().QueryContext(ctx, `SELECT task_id,logical_key,project_id,canonical_id,state,attempts,last_error FROM dispatch_workstreams WHERE state='pending' ORDER BY attempts,task_id LIMIT 100`)
+	rows, err := s.ReadDB().QueryContext(ctx, `SELECT task_id,logical_key,project_id,registry_project,namespace_project,canonical_id,state,attempts,last_error FROM dispatch_workstreams WHERE state='pending' ORDER BY attempts,task_id LIMIT 100`)
 	if err != nil {
 		return nil, err
 	}
@@ -71,12 +78,16 @@ func (s *Store) SaveDispatchWorkstream(ctx context.Context, r DispatchWorkstream
 		return err
 	}
 	defer w.Rollback()
-	res, err := w.tx.Exec(`UPDATE dispatch_workstreams SET canonical_id=?,state=?,attempts=attempts+1,last_error=? WHERE task_id=? AND logical_key=? AND project_id=?`, r.ID, r.State, r.LastError, r.TaskID, r.Key, r.ProjectID)
+	res, err := w.tx.Exec(`UPDATE dispatch_workstreams SET canonical_id=?,state=?,attempts=attempts+1,last_error=?,registry_project=?,namespace_project=? WHERE task_id=? AND logical_key=? AND project_id=? AND (state<>'closed' OR ?='closed')`, r.ID, r.State, r.LastError, r.RegistryProject, r.NamespaceProject, r.TaskID, r.Key, r.ProjectID, r.State)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		var state string
+		if err := w.tx.QueryRow(`SELECT state FROM dispatch_workstreams WHERE task_id=? AND logical_key=? AND project_id=?`, r.TaskID, r.Key, r.ProjectID).Scan(&state); err == nil && state == "closed" {
+			return ErrDispatchWorkstreamClosed
+		}
 		return fmt.Errorf("dispatch workstream binding changed")
 	}
 	stamp, _ := json.Marshal(map[string]any{"key": r.Key, "id": r.ID, "state": r.State, "last_error": r.LastError})
@@ -105,6 +116,7 @@ func (w *WriteTx) recordUnitLifecycle(taskID, previous, current string) error {
 		Key            string `json:"key"`
 		WorkstreamID   string `json:"workstream_id"`
 		ResultObserved bool   `json:"result_observed"`
+		ResultState    string `json:"result_state"`
 		Dissolved      bool   `json:"dissolved"`
 	}
 	_ = json.Unmarshal([]byte(previous), &before)
@@ -129,7 +141,7 @@ func (w *WriteTx) recordUnitLifecycle(taskID, previous, current string) error {
 		states = append(states, "dissolved")
 	}
 	for _, state := range states {
-		payload, _ := json.Marshal(map[string]string{"state": state, "run_id": after.RunID, "workstream_id": after.WorkstreamID, "dispatch_key": after.Key})
+		payload, _ := json.Marshal(map[string]string{"state": state, "run_id": after.RunID, "workstream_id": after.WorkstreamID, "dispatch_key": after.Key, "result_state": after.ResultState})
 		scope := w.scopeForTask(taskID)
 		if after.WorkstreamID != "" {
 			scope.WorkstreamID = after.WorkstreamID
@@ -143,10 +155,10 @@ func (w *WriteTx) recordUnitLifecycle(taskID, previous, current string) error {
 
 // DispatchEventWorkstream resolves the logical identity sealed with an event.
 func (s *Store) DispatchEventWorkstream(ctx context.Context, eventID string) (DispatchWorkstream, error) {
-	return scanDispatchWorkstream(s.ReadDB().QueryRowContext(ctx, `SELECT w.task_id,w.logical_key,w.project_id,w.canonical_id,w.state,w.attempts,w.last_error FROM dispatch_event_workstreams e JOIN dispatch_workstreams w ON w.task_id=e.task_id AND w.logical_key=e.logical_key AND w.project_id=e.project_id WHERE e.event_id=?`, eventID))
+	return scanDispatchWorkstream(s.ReadDB().QueryRowContext(ctx, `SELECT w.task_id,w.logical_key,w.project_id,w.registry_project,w.namespace_project,w.canonical_id,w.state,w.attempts,w.last_error FROM dispatch_event_workstreams e JOIN dispatch_workstreams w ON w.task_id=e.task_id AND w.logical_key=e.logical_key AND w.project_id=e.project_id WHERE e.event_id=?`, eventID))
 }
 func (s *Store) DispatchWorkstreamForKey(ctx context.Context, r DispatchWorkstream) (DispatchWorkstream, error) {
-	return scanDispatchWorkstream(s.ReadDB().QueryRowContext(ctx, `SELECT task_id,logical_key,project_id,canonical_id,state,attempts,last_error FROM dispatch_workstreams WHERE task_id=? AND logical_key=? AND project_id=?`, r.TaskID, r.Key, r.ProjectID))
+	return scanDispatchWorkstream(s.ReadDB().QueryRowContext(ctx, `SELECT task_id,logical_key,project_id,registry_project,namespace_project,canonical_id,state,attempts,last_error FROM dispatch_workstreams WHERE task_id=? AND logical_key=? AND project_id=?`, r.TaskID, r.Key, r.ProjectID))
 }
 
 // SealDispatchStatus returns the first immutable delivery body for an event.
@@ -167,4 +179,18 @@ func (s *Store) SealDispatchStatus(ctx context.Context, eventID string, payload 
 		return nil, err
 	}
 	return []byte(sealed), nil
+}
+
+// AssignDefaultTaskProject fills only an unassigned project; concurrent explicit
+// assignments win. The caller validates that the configured project exists.
+func (s *Store) AssignDefaultTaskProject(ctx context.Context, taskID, projectID string) error {
+	w, err := s.BeginWriteTx(ctx)
+	if err != nil {
+		return err
+	}
+	defer w.Rollback()
+	if _, err = w.tx.Exec(`UPDATE tasks SET project_id=? WHERE id=? AND COALESCE(project_id,'')=''`, projectID, taskID); err != nil {
+		return err
+	}
+	return w.Commit()
 }

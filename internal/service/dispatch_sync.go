@@ -29,7 +29,7 @@ import (
 type DispatchSyncConfig struct {
 	RegistryURL, RegistryTokenFile   string
 	TesseractURL, TesseractTokenFile string
-	Project, Author                  string
+	Author                           string
 	Timeout, PollInterval            time.Duration
 }
 
@@ -39,7 +39,6 @@ func DispatchSyncConfigFromEnv() DispatchSyncConfig {
 		RegistryTokenFile:  os.Getenv("TORQUE_REGISTRY_TOKEN_FILE"),
 		TesseractURL:       os.Getenv("TORQUE_TESSERACT_URL"),
 		TesseractTokenFile: os.Getenv("TORQUE_TESSERACT_TOKEN_FILE"),
-		Project:            os.Getenv("TORQUE_STATUS_PROJECT"),
 		Author:             os.Getenv("TORQUE_STATUS_AUTHOR"),
 	}
 }
@@ -85,14 +84,8 @@ func NewDispatchSync(store *sqlstore.Store, cfg DispatchSyncConfig) (*DispatchSy
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 5 * time.Second
 	}
-	if cfg.Project == "" {
-		cfg.Project = "torque"
-	}
 	if cfg.Author == "" {
 		cfg.Author = "torque-dispatcher"
-	}
-	if strings.ContainsAny(cfg.Project, "/\\") || strings.TrimSpace(cfg.Project) == "" {
-		return nil, fmt.Errorf("dispatch integration: invalid status project")
 	}
 	return &DispatchSync{store: store, cfg: cfg, http: &http.Client{Timeout: cfg.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
@@ -174,7 +167,8 @@ func (d *DispatchSync) prepare(ctx context.Context, t *sqlstore.TaskRecord, key,
 	lock := d.taskLock(t.ID)
 	lock.Lock()
 	defer lock.Unlock()
-	r, e := d.store.ReserveDispatchWorkstream(ctx, t.ID, key, project)
+	registryProject, namespace := d.projectScope(project)
+	r, e := d.store.ReserveDispatchWorkstream(ctx, t.ID, key, project, registryProject, namespace)
 	if e != nil {
 		return e
 	}
@@ -192,11 +186,22 @@ func (d *DispatchSync) prepare(ctx context.Context, t *sqlstore.TaskRecord, key,
 	return e
 }
 func (d *DispatchSync) ensure(ctx context.Context, r *sqlstore.DispatchWorkstream) error {
-	body := map[string]any{"key": r.Key}
-	if r.ProjectID != "" {
-		body["project_urns"] = []string{r.ProjectID}
+	if r.State == "closed" {
+		return ErrWorkstreamClosed
 	}
-	retry := sha256.Sum256([]byte(r.ProjectID + "\x00" + r.Key))
+	if r.ProjectID != "" && r.RegistryProject == "" {
+		r.RegistryProject, r.NamespaceProject = d.projectScope(r.ProjectID)
+		if r.RegistryProject == "" {
+			r.State = "pending"
+			r.LastError = "project_unmapped"
+			return d.store.SaveDispatchWorkstream(ctx, *r)
+		}
+	}
+	body := map[string]any{"key": r.Key}
+	if r.RegistryProject != "" {
+		body["project_urns"] = []string{r.RegistryProject}
+	}
+	retry := sha256.Sum256([]byte(r.RegistryProject + "\x00" + r.Key))
 	var result struct {
 		ID string `json:"id"`
 	}
@@ -220,6 +225,9 @@ func (d *DispatchSync) ensure(ctx context.Context, r *sqlstore.DispatchWorkstrea
 		r.State = "ensured"
 	}
 	if err := d.store.SaveDispatchWorkstream(ctx, *r); err != nil {
+		if errors.Is(err, sqlstore.ErrDispatchWorkstreamClosed) {
+			return ErrWorkstreamClosed
+		}
 		return err
 	}
 	if r.State == "closed" {
@@ -341,6 +349,7 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 	}
 	var p struct {
 		State        string `json:"state"`
+		ResultState  string `json:"result_state"`
 		To           string `json:"to"`
 		RunID        string `json:"run_id"`
 		WorkstreamID string `json:"workstream_id"`
@@ -352,22 +361,38 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 	state := ""
 	switch ev.Kind {
 	case "unit.lifecycle":
-		state = p.State
+		switch p.State {
+		case "dispatched", "formed":
+			state = "started"
+		case "running":
+			state = "progress"
+		case "RESULT":
+			state = p.ResultState
+			if state != "done" && state != "failed" && state != "blocked" {
+				state = "done"
+			}
+		case "dissolved":
+			state = "note"
+		case "failed", "blocked", "cancelled":
+			state = p.State
+		}
 	case catalog.KindTaskStateChanged:
 		switch p.To {
 		case "doing":
-			state = "running"
-		case "review", "blocked", "done":
+			state = "progress"
+		case "review", "blocked", "done", "cancelled":
 			state = p.To
 		}
 	case catalog.KindRunStateChanged:
 		switch p.To {
 		case "running":
-			state = "running"
+			state = "progress"
 		case "failed", "error":
 			state = "failed"
 		case "blocked":
 			state = "blocked"
+		case "cancelled", "canceled", "killed":
+			state = "cancelled"
 		}
 	}
 	if state == "" {
@@ -386,7 +411,7 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 		isUnit = sealedUnit
 	}
 	if ev.Kind == catalog.KindTaskStateChanged && p.To == "doing" && !isUnit {
-		state = "dispatched"
+		state = "started"
 	}
 	r, e := d.store.DispatchEventWorkstream(ctx, ev.ID)
 	if errors.Is(e, sql.ErrNoRows) {
@@ -432,6 +457,11 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 			runID = fmt.Sprintf("%d", executorRun.Int64)
 		}
 	}
+	if isUnit && runID == "" && p.State == "dispatched" {
+		if unit, ok := unitRunFrom(taskMetadata(t)); ok && unit.Key == p.DispatchKey && (unit.State == UnitForming || unit.State == UnitActive) {
+			return fmt.Errorf("status delivery awaiting team run id for task %s", t.ID)
+		}
+	}
 	sessionID := ev.SessionID
 	if sessionID == "" && runID != "" && !isUnit {
 		var session sql.NullString
@@ -439,9 +469,9 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 		sessionID = session.String
 	}
 
-	project := ev.Scope.ProjectID
+	project := r.NamespaceProject
 	if project == "" {
-		project = d.cfg.Project
+		project = "agent-os"
 	}
 	key := "torque-status-" + ev.ID
 	body := map[string]any{
@@ -453,13 +483,17 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 		"session_id":    sessionID,
 		"data": map[string]any{
 			"task_id": t.ID, "run_id": runID, "workstream_id": ws,
-			"event_id": ev.ID, "dispatch_key": p.DispatchKey,
+			"event_id": ev.ID, "dispatch_key": p.DispatchKey, "transition": p.State,
 		},
 		"consumer_state": map[string]any{
 			"state": state, "subject_urn": "msg://task/torque/" + t.ID,
 			"task": t.ID, "run": runID,
+			"task_id": t.ID, "run_id": runID, "workstream_key": r.Key,
 		},
 		"idempotency_key": key,
+	}
+	if isUnit && runID != "" {
+		body["consumer_state"].(map[string]any)["team_id"] = runID
 	}
 	raw, e := json.Marshal(body)
 	if e != nil {
@@ -483,7 +517,8 @@ func (d *DispatchSync) reserve(ctx context.Context, t *sqlstore.TaskRecord, key,
 	if d == nil || d.cfg.RegistryURL == "" {
 		return nil
 	}
-	_, err := d.store.ReserveDispatchWorkstream(ctx, t.ID, key, project)
+	registryProject, namespace := d.projectScope(project)
+	_, err := d.store.ReserveDispatchWorkstream(ctx, t.ID, key, project, registryProject, namespace)
 	return err
 }
 
@@ -494,3 +529,27 @@ func (d *DispatchSync) Stop() {
 	}
 	d.wg.Wait()
 }
+
+// Local PRJ IDs are storage keys, never Registry domains or namespace slugs.
+func (d *DispatchSync) projectScope(localID string) (registryProject, namespace string) {
+	namespace = "agent-os"
+	if localID == "" {
+		return
+	}
+	p, err := d.store.GetProject(localID)
+	if err != nil {
+		return
+	}
+	if p.ExternalAuthority == "registry" && strings.HasPrefix(p.ExternalID, "project:") {
+		slug := strings.TrimPrefix(p.ExternalID, "project:")
+		if projectSlug.MatchString(slug) {
+			return p.ExternalID, slug
+		}
+	}
+	if projectSlug.MatchString(p.Name) {
+		namespace = p.Name
+	}
+	return
+}
+
+var projectSlug = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
