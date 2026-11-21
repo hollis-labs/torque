@@ -58,6 +58,10 @@ func newOpsFixture(t *testing.T) *opsFixture {
 				return
 			}
 			a := req.Params.Arguments
+			allowed := map[string]bool{"id": true, "intake_key": true, "origin": true, "owner": true, "parent": true, "priority": true, "project": true, "purpose": true, "source": true, "stage": true, "title": true}
+			for k := range a {
+				require.True(t, allowed[k], "item_intake schema refuses %q (additionalProperties false)", k)
+			}
 			f.intakes = append(f.intakes, a)
 			require.Equal(t, "torque_auto", a["source"])
 			key := a["intake_key"].(string)
@@ -219,7 +223,7 @@ func TestOpsFirstDoingFilesUnfiledAndIntakeRetries(t *testing.T) {
 	require.Len(t, f.intakes, 1, "one intake per project, done once")
 	require.Equal(t, "torque:unfiled:", f.intakes[0]["intake_key"])
 	require.Equal(t, "unfiled-agent-os", f.intakes[0]["id"])
-	require.Equal(t, "in_flight", f.intakes[0]["stage"])
+	require.NotContains(t, f.intakes[0], "stage")
 }
 
 func TestOpsDispatchKeysRegistryOnItem(t *testing.T) {
@@ -258,4 +262,29 @@ func TestOpsSyncRequiresCredentialFile(t *testing.T) {
 	o, e := service.NewOpsSync(svc.Store(), service.OpsSyncConfig{})
 	require.NoError(t, e)
 	require.False(t, o.Enabled())
+}
+
+func TestOpsLegacyBoundTaskAndProjectSlug(t *testing.T) {
+	svc := setupService(t)
+	svc.Feature.Enable("projects")
+	f := newOpsFixture(t)
+	reg := newIdentityFixture(t)
+	h := newOpsHarness(t, svc, f, reg)
+	ctx := context.Background()
+
+	// Bound before ops_id existed: only the Registry key names the item.
+	legacy, e := svc.Task.Create(service.TaskCreateInput{Title: "legacy", Metadata: map[string]any{"workstream_id": "ops-system-of-record"}})
+	require.NoError(t, e)
+	_, e = svc.Store().ReadDB().Exec(`UPDATE tasks SET metadata=json_set(metadata,'$.workstream_id',?,'$.dispatch_workstream',json('{"key":"ops-system-of-record","id":"`+registryID+`","state":"ensured"}')) WHERE id=?`, registryID, legacy.ID)
+	require.NoError(t, e)
+	rec, _ := svc.Task.Get(legacy.ID)
+	require.Equal(t, "ops-system-of-record", service.OpsIDOf(rec))
+
+	p, e := svc.Project.Create(service.ProjectCreateInput{Name: "Substrate", RepoPath: t.TempDir()})
+	require.NoError(t, e)
+	task, e := svc.Task.Create(service.TaskCreateInput{Title: "orphan", ProjectID: p.ID})
+	require.NoError(t, e)
+	_, e = h.ops.Link(ctx, task.ID, true)
+	require.NoError(t, e)
+	require.Equal(t, "unfiled-substrate", taskMeta(t, svc, task.ID)["ops_id"])
 }

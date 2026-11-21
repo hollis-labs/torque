@@ -567,6 +567,14 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 	if project == "" {
 		project = "agent-os"
 	}
+	if d.ops.Enabled() && OpsIDOf(t) == "" {
+		// Bound before Ops linking existed: link now (inherit, else unfiled).
+		if _, le := d.ops.Link(ctx, t.ID, true); le == nil {
+			if fresh, ge := d.store.GetTask(t.ID); ge == nil {
+				t = fresh
+			}
+		}
+	}
 	opsID := OpsIDOf(t)
 	key := "torque-status-" + ev.ID
 	body := map[string]any{

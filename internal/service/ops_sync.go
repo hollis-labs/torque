@@ -227,6 +227,13 @@ func OpsIDOf(t *sqlstore.TaskRecord) string {
 			return s
 		}
 	}
+	// A task bound before ops_id existed keeps its item only as the Registry
+	// ensure key (metadata.workstream_id then holds the canonical id).
+	if d, isMap := m["dispatch_workstream"].(map[string]any); isMap {
+		if s := str(d["key"]); ok(s) {
+			return s
+		}
+	}
 	return ""
 }
 
@@ -323,7 +330,34 @@ func (o *OpsSync) projectSlug(localID string) string {
 	if projectSlug.MatchString(p.Name) {
 		return p.Name
 	}
+	if s := slugify(p.Name); s != "" {
+		return s
+	}
 	return "agent-os"
+}
+
+// slugify lowercases a project name into an ops slug ("Substrate" -> substrate).
+func slugify(name string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(name) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		case b.Len() > 0 && !dash:
+			b.WriteByte('-')
+			dash = true
+		}
+	}
+	s := strings.Trim(b.String(), "-")
+	if len(s) > 50 {
+		s = strings.Trim(s[:50], "-")
+	}
+	if !opsSlug.MatchString(s) {
+		return ""
+	}
+	return s
 }
 
 func (o *OpsSync) stamp(ctx context.Context, taskID string, r OpsLinkResult, unfiled bool) error {
@@ -383,10 +417,12 @@ func (o *OpsSync) retryDue(ctx context.Context) error {
 	rows.Close()
 	var errs []error
 	for _, in := range due {
+		// Live item_intake schema (Ops service): idempotent on intake_key, no
+		// idempotency_key field; stage left to Ops (it accepts planned|queued).
 		args := map[string]any{
-			"intake_key": in.key, "id": in.id, "title": in.title, "stage": "in_flight",
+			"intake_key": in.key, "id": in.id, "title": in.title,
 			"source": "torque_auto", "origin": map[string]any{"kind": "torque.task", "id": in.origin},
-			"idempotency_key": "torque-intake-" + in.key,
+			"purpose": "Torque tasks that reached doing with no Ops item (contract rev 3, section 3.1). Triage: link each to a real item.",
 		}
 		if in.project != "" {
 			args["project"] = in.project
