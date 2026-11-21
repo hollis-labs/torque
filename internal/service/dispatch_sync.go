@@ -55,7 +55,32 @@ type DispatchSync struct {
 	tickMu sync.Mutex
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	// ops, when enabled, links tasks to Ops items before Registry ensure and
+	// receives task status (ops/v2 contract) instead of direct Tesseract writes.
+	ops *OpsSync
 }
+
+// linkOps links t to its Ops item with a bounded inline intake and refreshes t.
+// It never fails a dispatch.
+func (d *DispatchSync) linkOps(ctx context.Context, t *sqlstore.TaskRecord) {
+	lctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	if _, e := d.ops.Link(lctx, t.ID, true); e != nil && !errors.Is(e, errOpsUnavailable) {
+		log.Printf("[ops-sync] link %s: %v", t.ID, e)
+	}
+	if fresh, e := d.store.GetTask(t.ID); e == nil {
+		*t = *fresh
+	}
+}
+
+// SetOps installs the Ops service integration (CW-20261121-0146/0147).
+func (d *DispatchSync) SetOps(o *OpsSync) {
+	if d != nil && o.Enabled() {
+		d.ops = o
+	}
+}
+
+func (d *DispatchSync) statusEnabled() bool { return d.cfg.TesseractURL != "" }
 
 const statusConsumer = "tesseract-status-v1"
 const statusScanConsumer = "tesseract-status-scan-v1"
@@ -97,7 +122,7 @@ func (d *DispatchSync) Start(ctx context.Context) error {
 	if !d.store.OutboxSupported() {
 		return fmt.Errorf("dispatch integration requires the SQLite commit-ordered outbox")
 	}
-	if d.cfg.TesseractURL != "" {
+	if d.statusEnabled() {
 		w, e := d.store.BeginWriteTx(ctx)
 		if e != nil {
 			return e
@@ -159,7 +184,14 @@ func dispatchLogicalKey(t *sqlstore.TaskRecord) string {
 // returned task includes the committed stamp. Outages persist a pending mark
 // and allow dispatch; closed identities are a definite refusal, never reminted.
 func (d *DispatchSync) Prepare(ctx context.Context, t *sqlstore.TaskRecord) error {
-	if d == nil || d.cfg.RegistryURL == "" {
+	if d == nil {
+		return nil
+	}
+	if d.ops.Enabled() && d.cfg.RegistryURL == "" {
+		d.linkOps(ctx, t)
+		return nil
+	}
+	if d.cfg.RegistryURL == "" {
 		return nil
 	}
 	project := t.ProjectID.String
@@ -179,6 +211,17 @@ func (d *DispatchSync) Prepare(ctx context.Context, t *sqlstore.TaskRecord) erro
 			*t = *fresh
 			project = t.ProjectID.String
 		}
+	}
+	if d.ops.Enabled() {
+		// G1: the Registry key is the Ops item id (design 2.5). Link first
+		// (inherit, else one bounded intake); a task still without an item is
+		// dispatched without a Registry binding and bound when the intake lands.
+		d.linkOps(ctx, t)
+		key := OpsIDOf(t)
+		if key == "" {
+			return nil
+		}
+		return d.prepare(ctx, t, key, project)
 	}
 	return d.prepare(ctx, t, dispatchLogicalKey(t), project)
 }
@@ -329,7 +372,7 @@ func (d *DispatchSync) Tick(ctx context.Context) error {
 			}
 		}
 	}
-	if d.cfg.TesseractURL == "" {
+	if !d.statusEnabled() {
 		return nil
 	}
 	after, e := d.store.OutboxCursorLoad(ctx, statusConsumer)
@@ -411,8 +454,10 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 	switch ev.Kind {
 	case "unit.lifecycle":
 		switch p.State {
-		case "dispatched", "formed":
+		case "dispatched":
 			state = "started"
+		case "formed":
+			state = "note" // dispatched already said started; formed is not a second start
 		case "running":
 			state = "progress"
 		case "RESULT":
@@ -522,6 +567,7 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 	if project == "" {
 		project = "agent-os"
 	}
+	opsID := OpsIDOf(t)
 	key := "torque-status-" + ev.ID
 	body := map[string]any{
 		"namespace":     "project/" + project + "/event/status",
@@ -533,11 +579,13 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 		"data": map[string]any{
 			"task_id": t.ID, "run_id": runID, "workstream_id": ws,
 			"event_id": ev.ID, "dispatch_key": p.DispatchKey, "transition": p.State,
+			"ops_id": opsID,
 		},
 		"consumer_state": map[string]any{
 			"state": state, "subject_urn": "msg://task/torque/" + t.ID,
 			"task": t.ID, "run": runID,
 			"task_id": t.ID, "run_id": runID, "workstream_key": r.Key,
+			"ops_id": opsID, "kind": "task_" + state,
 		},
 		"idempotency_key": key,
 	}
@@ -602,3 +650,56 @@ func (d *DispatchSync) projectScope(localID string) (registryProject, namespace 
 }
 
 var projectSlug = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+// opsAwaitingDefault is who an assignment_expired event waits on when the item's
+// team.lead is not known to Torque: the Lead Orchestrator (design 5.2).
+const opsAwaitingDefault = "msg://agent/agent-mux/agt_hlg0h0e50u"
+
+// PostAssignmentExpired writes the G6 event to the task's status stream: state
+// blocked, kind assignment_expired, with the stale holder in consumer_state.
+// Idempotent on the task and the assignment's start.
+func (d *DispatchSync) PostAssignmentExpired(ctx context.Context, t *sqlstore.TaskRecord, a *TaskAssignment, text string) error {
+	if d == nil || d.cfg.TesseractURL == "" {
+		return nil
+	}
+	project := ""
+	ws := ""
+	if r, e := d.store.DispatchWorkstream(ctx, t.ID); e == nil {
+		project, ws = r.NamespaceProject, r.ID
+	}
+	if project == "" {
+		_, project = d.projectScope(t.ProjectID.String)
+	}
+	if m := taskMetadata(t); ws == "" {
+		if v, _ := m["workstream_id"].(string); canonicalWorkstream.MatchString(v) {
+			ws = v
+		}
+	}
+	awaiting := os.Getenv("TORQUE_OPS_AWAITING_DEFAULT")
+	if awaiting == "" {
+		awaiting = opsAwaitingDefault
+	}
+	opsID := OpsIDOf(t)
+	key := "torque-assignment-expired-" + t.ID + "-" + a.AssignedAt
+	body := map[string]any{
+		"namespace":     "project/" + project + "/event/status",
+		"workstream_id": ws,
+		"summary":       truncate(fmt.Sprintf("%s assignment expired (%s): %s", t.ID, a.EndReason, t.Title), 500),
+		"body":          text,
+		"author":        map[string]any{"agent_id": d.cfg.Author},
+		"session_id":    "torque-assignments:" + t.ID,
+		"data": map[string]any{
+			"task_id": t.ID, "run_id": a.TeamRunID, "workstream_id": ws, "ops_id": opsID,
+			"end_reason": a.EndReason, "source": a.Source,
+		},
+		"consumer_state": map[string]any{
+			"state": "blocked", "kind": "assignment_expired", "subject_urn": "msg://task/torque/" + t.ID,
+			"task": t.ID, "task_id": t.ID, "run": a.TeamRunID, "run_id": a.TeamRunID, "ops_id": opsID,
+			"assignee_urn": a.AssigneeURN, "tether_session_id": a.TetherSessionID, "assigned_at": a.AssignedAt,
+			"awaiting": awaiting,
+		},
+		"idempotency_key": key,
+	}
+	_, e := d.post(ctx, d.cfg.TesseractURL, "/v1/event/write", d.cfg.TesseractTokenFile, key, body, nil)
+	return e
+}

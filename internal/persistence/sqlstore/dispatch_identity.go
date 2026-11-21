@@ -41,7 +41,7 @@ func (s *Store) ReserveDispatchWorkstream(ctx context.Context, taskID, key, proj
 		return r, err
 	}
 	stamp, _ := json.Marshal(map[string]any{"key": r.Key, "id": r.ID, "state": r.State, "last_error": r.LastError})
-	if _, err = w.tx.Exec(`UPDATE tasks SET metadata=json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,'$.dispatch_workstream',json(?),'$.workstream_id',?) WHERE id=?`, string(stamp), r.ID, r.TaskID); err != nil {
+	if _, err = w.tx.Exec(`UPDATE tasks SET metadata=json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,'$.dispatch_workstream',json(?),'$.workstream_id',CASE WHEN ?<>'' THEN ? ELSE COALESCE(json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,'$.workstream_id'),'') END) WHERE id=?`, string(stamp), r.ID, r.ID, r.TaskID); err != nil {
 		return r, err
 	}
 	return r, w.Commit()
@@ -95,7 +95,7 @@ func (s *Store) SaveDispatchWorkstream(ctx context.Context, r DispatchWorkstream
 		return err
 	}
 	stamp, _ := json.Marshal(map[string]any{"key": r.Key, "id": r.ID, "state": r.State, "last_error": r.LastError})
-	_, err = w.tx.Exec(`UPDATE tasks SET metadata=json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,'$.dispatch_workstream',json(?),'$.workstream_id',?) WHERE id=? AND EXISTS(SELECT 1 FROM dispatch_workstreams WHERE task_id=? AND logical_key=? AND project_id=? AND active=1)`, string(stamp), r.ID, r.TaskID, r.TaskID, r.Key, r.ProjectID)
+	_, err = w.tx.Exec(`UPDATE tasks SET metadata=json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,'$.dispatch_workstream',json(?),'$.workstream_id',CASE WHEN ?<>'' THEN ? ELSE COALESCE(json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,'$.workstream_id'),'') END) WHERE id=? AND EXISTS(SELECT 1 FROM dispatch_workstreams WHERE task_id=? AND logical_key=? AND project_id=? AND active=1)`, string(stamp), r.ID, r.ID, r.TaskID, r.TaskID, r.Key, r.ProjectID)
 	if err != nil {
 		return err
 	}
@@ -186,6 +186,10 @@ func (s *Store) SealDispatchStatus(ctx context.Context, eventID string, payload 
 	var body map[string]json.RawMessage
 	if err = json.Unmarshal([]byte(sealed), &body); err != nil {
 		return nil, err
+	}
+	if _, tesseract := body["namespace"]; !tesseract {
+		// Ops status_post arguments (ops/v2): sealed as written, no Tesseract repair.
+		return []byte(sealed), w.Commit()
 	}
 	var session string
 	if err = json.Unmarshal(body["session_id"], &session); err != nil && len(body["session_id"]) != 0 {

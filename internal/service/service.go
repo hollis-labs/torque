@@ -34,6 +34,7 @@ type Service struct {
 	Forums     *ForumsService
 	Judge      *JudgeService
 	Unit       *UnitService
+	Assignment *AssignmentService
 
 	// Models is the shared models.dev catalog. nil in test wiring; populated
 	// by serve / mcp entry points. Callers that depend on model metadata
@@ -53,9 +54,12 @@ func New(store *sqlstore.Store) *Service {
 	judgeSvc := &JudgeService{store: store, tags: tag, feature: feature}
 	task.afterCreate = judgeSvc.EnrichOnCreate
 	comment := &CommentService{store: store, writer: writequeue.NewDirect(store)}
+	assignment := NewAssignmentService(store)
+	task.onDoing = assignment.RecordDoing
 	return &Service{
 		store:      store,
 		Unit:       newUnitService(store, task, comment),
+		Assignment: assignment,
 		Task:       task,
 		Workstream: &WorkstreamService{store: store, task: task},
 		Run:        &RunService{store: store},

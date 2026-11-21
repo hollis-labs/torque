@@ -406,3 +406,56 @@ and is not a substitute for Registry-owned identity. The merged reconciliation
 plan remains PR #637. This PR's gated wire behavior is tested against a fake
 Tether; production propagation awaits 0030. Formation snapshots, including the
 flag's emitted fields, remain unchanged across ambiguous retries.
+
+## Ops system of record (ops/v2)
+
+Contract: `caster://ops/design.system-of-record-v2@3` (Registry `document:arch.ops-system-of-record`).
+
+| Setting | Meaning |
+| --- | --- |
+| `TORQUE_OPS_URL` | Ops service origin (MCP at `/mcp`), e.g. `http://127.0.0.1:8994`; enables item linking |
+| `TORQUE_OPS_TOKEN_FILE` | Required with the URL; Ops operator credential file, re-read on every call |
+| `TORQUE_OPS_ACTOR` | Stated actor (`X-Actor`); default `msg://service/torque/dispatcher` |
+| `TORQUE_OPS_AWAITING_DEFAULT` | Who an `assignment_expired` event waits on; default the Lead Orchestrator |
+
+**Every task has an Ops item (G1, CW-20261121-0146).** `metadata.ops_id` (the
+bare item slug) is the key field; `unit_plan.workstream_id`, `workstream_key` and
+a non-canonical `metadata.workstream_id` are read as aliases. A task without one
+is linked when it first moves to doing, is dispatched, or emits a status event:
+inherit from the parent chain (plans included), then from its epic (the item its
+other tasks are filed under), else the project's unfiled item
+`unfiled-<project slug>` with `metadata.unfiled = true`. At create only
+inheritance runs. `metadata.ops_link` records `source` (`self`, `parent`,
+`plan`, `epic`, `unfiled`) and `from`. Creates are never refused.
+The unfiled item is created once per project through Ops `item_intake`
+(`intake_key = torque:unfiled:<project>`, `stage: in_flight`,
+`source: torque_auto`); its id is deterministic, so linking never waits on Ops.
+An intake that cannot complete waits in `ops_intake_pending` and retries with
+backoff (10 s to about 10 min). With Ops on, the Registry ensure key is the
+`ops_id`: Torque never mints a per-task Registry workstream.
+
+**Lifecycle events carry the item (G2, CW-20261121-0147).** Torque keeps posting
+directly to the status stream (above) and adds `ops_id` and
+`kind: task_<state>` to `consumer_state` (and `ops_id` to `data`). Unit
+`formed` now maps to `note`, so a unit dispatch produces one `started`.
+
+**Assignments expire with their holder (G6, CW-20261121-0148).** The typed task
+record (MCP `format=typed`, HTTP task responses) carries a top-level
+`assignment` object, null when the task was never assigned:
+`assignee_urn, assignee_name, tether_session_id, team_run_id, claim_id,
+source (owner|doing|claim|dispatch), state (active|expired|released),
+assigned_at, lease_expires_at, ended_at, end_reason
+(session_ended|lease_lapsed|released|done)`. Torque records unit team runs
+(lease = unit deadline), runs bound to a Tether session, and workstream claims;
+`metadata.owner_urn` is projected as `source: owner`. Every 30 s it releases
+assignments whose task finished and expires those whose team run failed,
+whose session ended (Tether `GET /sessions/{id}`), or whose lease lapsed. An
+expired row keeps its holder, gets a task comment, and is posted to the status
+stream as `state: blocked`, `kind: assignment_expired`, with `assignee_urn`,
+`tether_session_id`, `assigned_at` and `awaiting` in `consumer_state`.
+`source: doing` records the caller who moved the task to doing, from the
+`X-Tether-Agent-Urn` and `X-Tether-Session-Id` headers the Tether gateway stamps
+on proxied MCP calls. Torque trusts them only on `/mcp` requests carrying the
+static `TORQUE_API_TOKEN` bearer (the gateway's configured upstream token); stdio
+and direct calls record nothing. An active `dispatch` or `claim` holder is not
+replaced.

@@ -158,6 +158,18 @@ func requiredWorkflowPolicyFromTask(t *sqlstore.TaskRecord) (hitl.RequiredWorkfl
 // at current scale; each is an indexed single-row read per task). Collection
 // names are resolved in ONE batch query for all unique collection_ids in
 // the slice — saves an N+1 on the lookup that the GUI uses for the badge.
+// withAssignment adds the G6 assignment object (CW-20261121-0148) to a
+// single-task body, matching the typed MCP record; null when never assigned.
+func (s *Server) withAssignment(task *sqlstore.TaskRecord, body map[string]interface{}) map[string]interface{} {
+	body["assignment"] = nil
+	if s.svc.Assignment != nil {
+		if a, err := s.svc.Assignment.Get(task); err == nil && a != nil {
+			body["assignment"] = a.View()
+		}
+	}
+	return body
+}
+
 func (s *Server) tasksJSON(tasks []sqlstore.TaskRecord) ([]map[string]interface{}, error) {
 	out := make([]map[string]interface{}, len(tasks))
 	collectionNames := s.collectionNamesForTasks(tasks)
@@ -1013,7 +1025,7 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, deps, agg, subs, s.collectionNameForTask(task)))
+	writeJSON(w, http.StatusOK, s.withAssignment(task, taskJSON(task, tags, deps, agg, subs, s.collectionNameForTask(task))))
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
@@ -1267,7 +1279,7 @@ func (s *Server) updateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.sse.Broadcast("task.updated", map[string]interface{}{"task_id": id})
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, deps, agg, subs, s.collectionNameForTask(task)))
+	writeJSON(w, http.StatusOK, s.withAssignment(task, taskJSON(task, tags, deps, agg, subs, s.collectionNameForTask(task))))
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
@@ -1329,7 +1341,7 @@ func (s *Server) transitionTask(w http.ResponseWriter, r *http.Request) {
 
 	// task.transitioned reaches /events from the outbox (sse_outbox.go), in the
 	// same transaction as the change, for every path and not just this route.
-	writeJSON(w, http.StatusOK, taskJSON(task, tags, deps, agg, subs, s.collectionNameForTask(task)))
+	writeJSON(w, http.StatusOK, s.withAssignment(task, taskJSON(task, tags, deps, agg, subs, s.collectionNameForTask(task))))
 }
 
 func (s *Server) bulkTransitionTasks(w http.ResponseWriter, r *http.Request) {

@@ -243,19 +243,31 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	sched.SetLandingEvaluator(svc.Task.LandingEvaluate)
 	svc.Workstream.SetGo(sched.Enabled)
 	dispatchSyncConfig := service.DispatchSyncConfigFromEnv()
-	if dispatchSyncConfig.RegistryURL != "" || dispatchSyncConfig.TesseractURL != "" {
+	// Ops system of record (CW-20261121-0146/0147/0148): TORQUE_OPS_URL links tasks
+	// to Ops items and sends task status to the Ops service.
+	opsSync, err := service.NewOpsSync(store, service.OpsSyncConfigFromEnv())
+	if err != nil {
+		return err
+	}
+	if dispatchSyncConfig.RegistryURL != "" || dispatchSyncConfig.TesseractURL != "" || opsSync.Enabled() {
 		dispatchSync, err := service.NewDispatchSync(store, dispatchSyncConfig)
 		if err != nil {
 			return err
 		}
+		dispatchSync.SetOps(opsSync)
 		dispatchCtx, dispatchCancel := context.WithCancel(context.Background())
 		defer dispatchCancel()
+		if err := opsSync.Start(dispatchCtx); err != nil {
+			return err
+		}
+		defer opsSync.Stop()
 		if err := dispatchSync.Start(dispatchCtx); err != nil {
 			return err
 		}
 		defer dispatchSync.Stop()
 		svc.Unit.SetDispatchSync(dispatchSync)
 		sched.SetDispatchIdentity(dispatchSync.Prepare)
+		svc.Assignment.SetStatusSink(dispatchSync.PostAssignmentExpired)
 	}
 
 	// Tether reads (capacity, team-run state) are consulted only when
@@ -280,7 +292,13 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 			sched.EventBus().Publish(scheduler.SchedulerEvent{Type: "task.notify", TaskID: taskID, Data: map[string]interface{}{"reason": reason}})
 		})
 		log.Printf("[serve] unit-of-work dispatch forms teams through Tether at %s", uc.BaseURL)
+		svc.Assignment.SetSessions(uc)
 	}
+	// G6 (CW-20261121-0148): assignments expire when their holder is gone.
+	assignCtx, assignCancel := context.WithCancel(context.Background())
+	defer assignCancel()
+	svc.Assignment.Start(assignCtx, 30*time.Second)
+	defer svc.Assignment.Stop()
 	stateWriter := writeq.New(store, writeq.Options{})
 	sched.SetStateWriter(stateWriter)
 	writerCtx, writerCancel := context.WithCancel(context.Background())
