@@ -162,7 +162,9 @@ type TaskService struct {
 	tags               *TagService
 	afterCreate        func(taskID string)    // set by New; never blocks or fails a create
 	transitionObserver TaskTransitionObserver // optional; nil disables the observer hook
-	commentObserver    CommentObserver        // optional; nil disables the observer hook
+	// onDoing records who moved a task to doing (G6); nil disables it.
+	onDoing         func(ctx context.Context, taskID string)
+	commentObserver CommentObserver // optional; nil disables the observer hook
 	// registeredExecutors lists the executor names this process can
 	// dispatch to; nil disables the executor check. See
 	// SetRegisteredExecutors.
@@ -1355,6 +1357,9 @@ func (s *TaskService) TransitionWithComment(ctx context.Context, id, newStatus, 
 }
 
 func (s *TaskService) notifyTransition(ctx context.Context, id, from, to string) {
+	if to == "doing" && from != "doing" && s.onDoing != nil {
+		s.onDoing(ctx, id)
+	}
 	if s.transitionObserver == nil {
 		return
 	}

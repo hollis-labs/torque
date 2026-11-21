@@ -463,3 +463,27 @@ func (s *AssignmentService) announceExpiry(ctx context.Context, t *sqlstore.Task
 		log.Printf("[assignments] status post %s: %v", t.ID, err)
 	}
 }
+
+// RecordDoing records the gateway-vouched caller who moved a task to doing
+// (source=doing). Without a caller in ctx (stdio, direct API, scheduler) it does
+// nothing: dispatch, claims and owner_urn cover those. A stronger holder that is
+// already active (a unit run or claim) is not replaced.
+func (s *AssignmentService) RecordDoing(ctx context.Context, taskID string) {
+	c, ok := CallerFrom(ctx)
+	if !ok || (c.AgentURN == "" && c.SessionID == "") {
+		return
+	}
+	var source string
+	err := s.store.ReadDB().QueryRowContext(ctx, `SELECT source FROM task_assignments WHERE task_id=? AND state='active'`, taskID).Scan(&source)
+	if err == nil && (source == "dispatch" || source == "claim") {
+		return
+	}
+	urn := c.AgentURN
+	if urn == "" {
+		urn = "msg://session/local/" + c.SessionID
+	}
+	a := TaskAssignment{TaskID: taskID, AssigneeURN: urn, TetherSessionID: c.SessionID, Source: "doing", AssignedAt: s.now().UTC().Format(time.RFC3339)}
+	if err := s.upsertActive(ctx, a); err != nil {
+		log.Printf("[assignments] record doing %s: %v", taskID, err)
+	}
+}

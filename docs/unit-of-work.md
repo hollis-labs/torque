@@ -453,5 +453,9 @@ whose session ended (Tether `GET /sessions/{id}`), or whose lease lapsed. An
 expired row keeps its holder, gets a task comment, and is posted to the status
 stream as `state: blocked`, `kind: assignment_expired`, with `assignee_urn`,
 `tether_session_id`, `assigned_at` and `awaiting` in `consumer_state`.
-`source: doing` (the caller who moved the task) needs the gateway to forward
-caller identity and is not recorded yet.
+`source: doing` records the caller who moved the task to doing, from the
+`X-Tether-Agent-Urn` and `X-Tether-Session-Id` headers the Tether gateway stamps
+on proxied MCP calls. Torque trusts them only on `/mcp` requests carrying the
+static `TORQUE_API_TOKEN` bearer (the gateway's configured upstream token); stdio
+and direct calls record nothing. An active `dispatch` or `claim` holder is not
+replaced.

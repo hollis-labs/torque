@@ -147,3 +147,33 @@ func TestAssignmentDeadSessionExpires(t *testing.T) {
 	require.Equal(t, "session_ended", gd.EndReason)
 	require.Equal(t, "msg://session/local/gone-2", gd.AssigneeURN)
 }
+
+func TestAssignmentRecordsGatewayCallerOnDoingAndExpiresWithSession(t *testing.T) {
+	svc := setupService(t)
+	svc.Assignment.SetSessions(fakeSessions{"sess-live": "running"})
+	task, e := svc.Task.Create(service.TaskCreateInput{Title: "hand-started"})
+	require.NoError(t, e)
+	anon, e := svc.Task.Create(service.TaskCreateInput{Title: "no caller"})
+	require.NoError(t, e)
+	ctx := service.WithCaller(context.Background(), service.Caller{AgentURN: "msg://agent/agent-mux/agt_worker", SessionID: "sess-live"})
+	require.NoError(t, svc.Task.Transition(ctx, task.ID, "doing"))
+	require.NoError(t, svc.Task.Transition(context.Background(), anon.ID, "doing"))
+
+	rec, _ := svc.Task.Get(task.ID)
+	a, _ := svc.Assignment.Get(rec)
+	require.Equal(t, "doing", a.Source)
+	require.Equal(t, "msg://agent/agent-mux/agt_worker", a.AssigneeURN)
+	require.Equal(t, "sess-live", a.TetherSessionID)
+	ra, _ := svc.Task.Get(anon.ID)
+	a2, _ := svc.Assignment.Get(ra)
+	require.Nil(t, a2, "no caller, no owner: unknown, not invented")
+
+	require.NoError(t, svc.Assignment.Reconcile(context.Background()))
+	a, _ = svc.Assignment.Get(rec)
+	require.Equal(t, "active", a.State)
+	svc.Assignment.SetSessions(fakeSessions{})
+	require.NoError(t, svc.Assignment.Reconcile(context.Background()))
+	a, _ = svc.Assignment.Get(rec)
+	require.Equal(t, "expired", a.State)
+	require.Equal(t, "session_ended", a.EndReason)
+}

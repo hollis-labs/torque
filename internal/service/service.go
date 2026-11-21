@@ -54,10 +54,12 @@ func New(store *sqlstore.Store) *Service {
 	judgeSvc := &JudgeService{store: store, tags: tag, feature: feature}
 	task.afterCreate = judgeSvc.EnrichOnCreate
 	comment := &CommentService{store: store, writer: writequeue.NewDirect(store)}
+	assignment := NewAssignmentService(store)
+	task.onDoing = assignment.RecordDoing
 	return &Service{
 		store:      store,
 		Unit:       newUnitService(store, task, comment),
-		Assignment: NewAssignmentService(store),
+		Assignment: assignment,
 		Task:       task,
 		Workstream: &WorkstreamService{store: store, task: task},
 		Run:        &RunService{store: store},

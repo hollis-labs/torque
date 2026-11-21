@@ -1,8 +1,10 @@
 package httpserver
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -84,6 +86,16 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
 	if s.mcp == nil {
 		writeError(w, http.StatusServiceUnavailable, "the MCP endpoint is not configured on this server")
 		return
+	}
+	// G6 (CW-20261121-0148): the Tether gateway stamps the admitted caller's
+	// session principal on proxied calls. Those headers are trusted only with
+	// the bearer the gateway is configured with (the static token); the gateway
+	// strips caller-supplied x-tether-* headers before stamping its own.
+	if tok := s.security.Token; tok != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+tok)) == 1 {
+		c := service.Caller{AgentURN: strings.TrimSpace(r.Header.Get("X-Tether-Agent-Urn")), SessionID: strings.TrimSpace(r.Header.Get("X-Tether-Session-Id"))}
+		if len(c.AgentURN) <= 1000 && len(c.SessionID) <= 200 {
+			r = r.WithContext(service.WithCaller(r.Context(), c))
+		}
 	}
 	s.mcp.ServeHTTP(w, r)
 }
