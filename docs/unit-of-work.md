@@ -363,9 +363,14 @@ sealing its body. A terminal failed formation with no run keeps that unavailable
 ID empty; it never invents an execution session or JTI.
 The exact outbound body is sealed in SQLite before sending, with an
 idempotency key based on the original event ID. Restart, timeout, or loss of an
-accepted response replays that same body/key. Failed deliveries retain the
-cursor; retention cannot prune unacknowledged status entries. A pending Registry
-binding delays status delivery but never the launched team's execution.
+accepted response replays that same body/key. Each failed delivery remains in a
+durable pending ledger. A separate scan cursor stages new pages while bounded
+retry pages rotate by attempt count, so an unmapped project or in-flight team
+does not starve other tasks, including beyond one page of pending events.
+The delivery watermark stays before the oldest pending event; retention cannot
+prune its source envelope, binding, or sealed body. Pending events and retry
+turns survive restart. A pending Registry binding delays its own status delivery
+but never the launched team's execution.
 
 The reader starts at the outbox head on first enable; it does not backfill old
 dispatch history. Subsequent starts resume its persisted `tesseract-status-v1`

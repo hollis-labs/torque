@@ -45,7 +45,7 @@ func DispatchSyncConfigFromEnv() DispatchSyncConfig {
 
 // DispatchSync binds Registry identities before launch with a short deadline,
 // then retries outages in the background. Its status reader consumes Torque's
-// transactional outbox, advancing its durable cursor only after acceptance.
+// transactional outbox, retaining each pending delivery until acceptance.
 // Network I/O never happens under Torque's writer or a unit lock.
 type DispatchSync struct {
 	store  *sqlstore.Store
@@ -58,6 +58,7 @@ type DispatchSync struct {
 }
 
 const statusConsumer = "tesseract-status-v1"
+const statusScanConsumer = "tesseract-status-scan-v1"
 
 var canonicalWorkstream = regexp.MustCompile(`^workstream:[0-7][0-9A-HJKMNP-TV-Z]{25}$`)
 var ErrWorkstreamClosed = errors.New("Registry workstream_closed: choose a new logical workstream key")
@@ -283,9 +284,9 @@ func (d *DispatchSync) post(ctx context.Context, endpoint, path, file, key strin
 	return "", nil
 }
 
-// Tick retries pending Registry bindings and delivers a bounded outbox page.
-// A failed delivery retains the cursor and the same idempotency key. This is
-// at-least-once delivery, including the accepted-but-response-lost case.
+// Tick stages new outbox pages independently of unresolved deliveries, then
+// rotates through a bounded retry page. A failed event retains its original
+// body/key and pins retention without starving unrelated tasks or projects.
 func (d *DispatchSync) Tick(ctx context.Context) error {
 	d.tickMu.Lock()
 	defer d.tickMu.Unlock()
@@ -321,19 +322,44 @@ func (d *DispatchSync) Tick(ctx context.Context) error {
 	if head < after {
 		return fmt.Errorf("status cursor is beyond outbox head: restore/reset requires reconciliation")
 	}
-	events, e := d.store.OutboxAfter(ctx, after, 100)
+	// Validate the retention watermark even when the scan is farther ahead.
+	if _, e = d.store.OutboxAfter(ctx, after, 1); e != nil {
+		return e
+	}
+	scan, e := d.store.OutboxCursorLoad(ctx, statusScanConsumer)
 	if e != nil {
 		return e
 	}
+	if scan < after {
+		scan = after // first enable or upgrade from the sequential consumer
+	}
+	if scan > head {
+		return fmt.Errorf("status scan cursor is beyond outbox head: restore/reset requires reconciliation")
+	}
+	events, e := d.store.OutboxAfter(ctx, scan, 100)
+	if e != nil {
+		return e
+	}
+	if e = d.store.StageDispatchStatuses(ctx, statusScanConsumer, events); e != nil {
+		return e
+	}
+	events, e = d.store.PendingDispatchStatuses(ctx, 100)
+	if e != nil {
+		return e
+	}
+	var deliveryError error
 	for _, entry := range events {
 		if e = d.deliver(ctx, entry); e != nil {
-			return e
+			if deliveryError == nil {
+				deliveryError = e
+			}
+			continue
 		}
-		if e = d.store.OutboxCursorSave(ctx, statusConsumer, entry.Seq); e != nil {
+		if e = d.store.AcknowledgeDispatchStatus(ctx, statusConsumer, statusScanConsumer, entry.Seq); e != nil {
 			return e
 		}
 	}
-	return nil
+	return deliveryError
 }
 func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) error {
 	ev := entry.Event

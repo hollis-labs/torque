@@ -598,13 +598,96 @@ func TestDispatchStatusWaitsForFormedRunBeforeSealing(t *testing.T) {
 	var sealed int
 	require.NoError(t, svc.Store().ReadDB().QueryRow(`SELECT COUNT(*) FROM dispatch_status_payloads`).Scan(&sealed))
 	require.Zero(t, sealed)
+	// An unresolved formation defers only its own delivery, not another task.
+	other, e := svc.Task.Create(service.TaskCreateInput{Title: "independent task"})
+	require.NoError(t, e)
+	require.NoError(t, d.Prepare(context.Background(), other))
+	require.NoError(t, svc.Task.Transition(context.Background(), other.ID, "blocked"))
+	require.ErrorContains(t, d.Tick(context.Background()), "awaiting team run id")
+	require.Len(t, f.events(), 1)
+	require.Equal(t, other.ID, f.events()[0]["data"].(map[string]any)["task_id"])
 	close(release)
 	run := <-finished
 	require.NoError(t, <-fail)
 	require.NoError(t, d.Tick(context.Background()))
 	for _, body := range f.events() {
-		require.Equal(t, run.RunID, body["consumer_state"].(map[string]any)["run_id"])
+		if body["data"].(map[string]any)["task_id"] == id {
+			require.Equal(t, run.RunID, body["consumer_state"].(map[string]any)["run_id"])
+		}
 	}
+}
+
+func TestDispatchPendingPageDoesNotStarveOtherTasksAndSurvivesRestart(t *testing.T) {
+	ctx := context.Background()
+	svc := setupService(t)
+	require.NoError(t, svc.Feature.Enable("projects"))
+	local := &sqlstore.ProjectRecord{ID: "PRJ-PENDING", Name: "pending"}
+	require.NoError(t, svc.Store().CreateProject(local))
+	f := newIdentityFixture(t)
+	d := syncFixture(t, svc, f)
+	a, e := svc.Task.Create(service.TaskCreateInput{Title: "unmapped", ProjectID: local.ID})
+	require.NoError(t, e)
+	require.NoError(t, d.Prepare(ctx, a))
+	// More unresolved statuses than a complete retry page. A scan that always
+	// starts at the oldest failure cannot reach B, even over repeated ticks.
+	const transitions = 110
+	for i := 0; i < transitions; i++ {
+		state := "blocked"
+		if i%2 != 0 {
+			state = "doing"
+		}
+		require.NoError(t, svc.Task.Transition(ctx, a.ID, state))
+	}
+	b, e := svc.Task.Create(service.TaskCreateInput{Title: "healthy"})
+	require.NoError(t, e)
+	require.NoError(t, d.Prepare(ctx, b))
+	require.NoError(t, svc.Task.Transition(ctx, b.ID, "blocked"))
+	for i := 0; i < 5; i++ {
+		require.ErrorContains(t, d.Tick(ctx), "pending Registry")
+	}
+	require.Len(t, f.events(), 1)
+	require.Equal(t, b.ID, f.events()[0]["data"].(map[string]any)["task_id"])
+	var pending int
+	require.NoError(t, svc.Store().ReadDB().QueryRow(`SELECT COUNT(*) FROM dispatch_status_pending`).Scan(&pending))
+	require.Equal(t, transitions, pending)
+	// Retention must preserve A's source/binding, despite B's acceptance.
+	_, e = svc.Store().OutboxTrimBefore(ctx, time.Now().Add(time.Hour))
+	require.NoError(t, e)
+	require.NoError(t, svc.Store().ReadDB().QueryRow(`SELECT COUNT(*) FROM dispatch_status_pending`).Scan(&pending))
+	require.Equal(t, transitions, pending)
+	d.Stop()
+	d2 := syncFixture(t, svc, f)
+	require.ErrorContains(t, d2.Tick(ctx), "pending Registry")
+	require.Len(t, f.events(), 1) // accepted B never enters the retry queue again
+	// Resolve the mapping after restart; previously deferred events recover
+	// under their original logical key with a truthful Registry domain.
+	w, e := svc.Store().BeginWriteTx(ctx)
+	require.NoError(t, e)
+	_, e = w.Exec(`UPDATE projects SET external_authority='registry',external_id='project:recovered' WHERE id=?`, local.ID)
+	require.NoError(t, e)
+	require.NoError(t, w.Commit())
+	for i := 0; i < 3; i++ {
+		require.NoError(t, d2.Tick(ctx))
+	}
+	require.Len(t, f.events(), transitions+1)
+	for _, body := range f.events() {
+		if body["data"].(map[string]any)["task_id"] == a.ID {
+			require.Equal(t, "project/recovered/event/status", body["namespace"])
+			require.Equal(t, registryID, body["workstream_id"])
+		}
+	}
+	require.NoError(t, svc.Store().ReadDB().QueryRow(`SELECT COUNT(*) FROM dispatch_status_pending`).Scan(&pending))
+	require.Zero(t, pending)
+	head, e := svc.Store().OutboxHead(ctx)
+	require.NoError(t, e)
+	cursor, e := svc.Store().OutboxCursorLoad(ctx, "tesseract-status-v1")
+	require.NoError(t, e)
+	require.Equal(t, head, cursor)
+	_, e = svc.Store().OutboxTrimBefore(ctx, time.Now().Add(time.Hour))
+	require.NoError(t, e)
+	// Settlement released retention, and a restart cannot replay accepted B/A.
+	require.NoError(t, d2.Tick(ctx))
+	require.Len(t, f.events(), transitions+1)
 }
 
 func TestDispatchRepeatedStatesHaveDistinctTransitionKeys(t *testing.T) {
