@@ -159,7 +159,28 @@ func dispatchLogicalKey(t *sqlstore.TaskRecord) string {
 // returned task includes the committed stamp. Outages persist a pending mark
 // and allow dispatch; closed identities are a definite refusal, never reminted.
 func (d *DispatchSync) Prepare(ctx context.Context, t *sqlstore.TaskRecord) error {
-	return d.prepare(ctx, t, dispatchLogicalKey(t), t.ProjectID.String)
+	if d == nil || d.cfg.RegistryURL == "" {
+		return nil
+	}
+	project := t.ProjectID.String
+	if project == "" {
+		project = os.Getenv("TORQUE_UNIT_DEFAULT_PROJECT")
+		if project != "" {
+			if _, err := d.store.GetProject(project); err != nil {
+				return &ValidationError{Field: "TORQUE_UNIT_DEFAULT_PROJECT", Message: "configured project does not exist"}
+			}
+			if err := d.store.AssignDefaultTaskProject(ctx, t.ID, project); err != nil {
+				return err
+			}
+			fresh, err := d.store.GetTask(t.ID)
+			if err != nil {
+				return err
+			}
+			*t = *fresh
+			project = t.ProjectID.String
+		}
+	}
+	return d.prepare(ctx, t, dispatchLogicalKey(t), project)
 }
 func (d *DispatchSync) prepare(ctx context.Context, t *sqlstore.TaskRecord, key, project string) error {
 	if d == nil || d.cfg.RegistryURL == "" {
@@ -347,25 +368,27 @@ func (d *DispatchSync) Tick(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	var deliveryError error
+	var deliveryErrors []error
 	for _, entry := range events {
 		if e = d.deliver(ctx, entry); e != nil {
-			if deliveryError == nil {
-				deliveryError = e
-			}
+			deliveryErrors = append(deliveryErrors, fmt.Errorf("status event %s: %w", entry.Event.ID, e))
 			continue
 		}
 		if e = d.store.AcknowledgeDispatchStatus(ctx, statusConsumer, statusScanConsumer, entry.Seq); e != nil {
 			return e
 		}
 	}
-	return deliveryError
+	return errors.Join(deliveryErrors...)
 }
 func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) error {
 	ev := entry.Event
 	var sealed string
 	if err := d.store.ReadDB().QueryRowContext(ctx, `SELECT payload FROM dispatch_status_payloads WHERE event_id=?`, ev.ID).Scan(&sealed); err == nil {
-		_, err = d.post(ctx, d.cfg.TesseractURL, "/v1/event/write", d.cfg.TesseractTokenFile, "torque-status-"+ev.ID, json.RawMessage(sealed), nil)
+		raw, err := d.store.SealDispatchStatus(ctx, ev.ID, []byte(sealed))
+		if err != nil {
+			return err
+		}
+		_, err = d.post(ctx, d.cfg.TesseractURL, "/v1/event/write", d.cfg.TesseractTokenFile, "torque-status-"+ev.ID, json.RawMessage(raw), nil)
 		return err
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err

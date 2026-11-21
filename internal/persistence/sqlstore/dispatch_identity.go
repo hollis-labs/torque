@@ -165,7 +165,8 @@ func (s *Store) DispatchWorkstreamForKey(ctx context.Context, r DispatchWorkstre
 	return scanDispatchWorkstream(s.ReadDB().QueryRowContext(ctx, `SELECT task_id,logical_key,project_id,registry_project,namespace_project,canonical_id,state,attempts,last_error FROM dispatch_workstreams WHERE task_id=? AND logical_key=? AND project_id=?`, r.TaskID, r.Key, r.ProjectID))
 }
 
-// SealDispatchStatus returns the first immutable delivery body for an event.
+// SealDispatchStatus returns the first delivery body for an event, repairing only
+// the empty session_id in legacy dispatcher payloads rejected by Tesseract.
 func (s *Store) SealDispatchStatus(ctx context.Context, eventID string, payload []byte) ([]byte, error) {
 	w, err := s.BeginWriteTx(ctx)
 	if err != nil {
@@ -178,6 +179,45 @@ func (s *Store) SealDispatchStatus(ctx context.Context, eventID string, payload 
 	var sealed string
 	if err = w.tx.QueryRow(`SELECT payload FROM dispatch_status_payloads WHERE event_id=?`, eventID).Scan(&sealed); err != nil {
 		return nil, err
+	}
+	// Older dispatcher payloads were sealed with an empty session_id and were
+	// rejected by Tesseract. Repair only that invalid field, retaining the
+	// original identity and all other sealed values across retries/restarts.
+	var body map[string]json.RawMessage
+	if err = json.Unmarshal([]byte(sealed), &body); err != nil {
+		return nil, err
+	}
+	var session string
+	if err = json.Unmarshal(body["session_id"], &session); err != nil && len(body["session_id"]) != 0 {
+		return nil, err
+	}
+	if session == "" {
+		var data struct {
+			RunID  string `json:"run_id"`
+			TaskID string `json:"task_id"`
+		}
+		if err = json.Unmarshal(body["data"], &data); err != nil {
+			return nil, err
+		}
+		identity := data.RunID
+		if identity == "" {
+			identity = data.TaskID
+		}
+		if identity == "" {
+			identity = eventID
+		}
+		body["session_id"], err = json.Marshal("torque-dispatcher:" + identity)
+		if err != nil {
+			return nil, err
+		}
+		raw, marshalErr := json.Marshal(body)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		sealed = string(raw)
+		if _, err = w.tx.Exec(`UPDATE dispatch_status_payloads SET payload=? WHERE event_id=?`, sealed, eventID); err != nil {
+			return nil, err
+		}
 	}
 	if err = w.Commit(); err != nil {
 		return nil, err

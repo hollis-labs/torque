@@ -69,6 +69,7 @@ func newIdentityFixture(t *testing.T) *identityFixture {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "created": f.registryCalls == 1, "version_token": "v1"})
 		case "/v1/event/write":
+			require.NotEmpty(t, body["session_id"], "Tesseract requires a session for every status event")
 			cs := body["consumer_state"].(map[string]any)
 			require.Contains(t, []string{"started", "progress", "blocked", "review", "done", "failed", "cancelled", "note"}, cs["state"])
 			require.Contains(t, cs, "task_id")
@@ -563,6 +564,7 @@ func TestDispatchUnitResultUsesClosedVocabulary(t *testing.T) {
 			found := false
 			for _, body := range f.events() {
 				if body["data"].(map[string]any)["transition"] == "RESULT" {
+					require.NotEmpty(t, body["session_id"], "Tesseract requires a session for every status event")
 					cs := body["consumer_state"].(map[string]any)
 					require.Equal(t, tc.state, cs["state"])
 					require.Equal(t, id, cs["task_id"])
@@ -820,4 +822,110 @@ func TestDispatchOutageAmbiguousRecoveryPreservesFormationBytes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDispatchProjectlessTaskUsesDefaultBeforeEnsure(t *testing.T) {
+	ctx := context.Background()
+	svc := setupService(t)
+	require.NoError(t, svc.Feature.Enable("projects"))
+	p, _, err := svc.Store().CreateProjectByReference(&sqlstore.ProjectRecord{Name: "Default", ExternalAuthority: "registry", ExternalID: "project:agent-os"})
+	require.NoError(t, err)
+	t.Setenv("TORQUE_UNIT_DEFAULT_PROJECT", p.ID)
+	f := newIdentityFixture(t)
+	d := syncFixture(t, svc, f)
+	task, err := svc.Task.Create(service.TaskCreateInput{Title: "no project"})
+	require.NoError(t, err)
+	require.NoError(t, d.Prepare(ctx, task))
+	require.Equal(t, p.ID, task.ProjectID.String)
+	stored, err := svc.Store().GetTask(task.ID)
+	require.NoError(t, err)
+	require.Equal(t, p.ID, stored.ProjectID.String)
+	f.mu.Lock()
+	require.Equal(t, []any{"project:agent-os"}, f.projectDomains[0])
+	f.mu.Unlock()
+	// Explicit projects continue to determine the ensure domain.
+	other, _, err := svc.Store().CreateProjectByReference(&sqlstore.ProjectRecord{Name: "Other", ExternalAuthority: "registry", ExternalID: "project:other"})
+	require.NoError(t, err)
+	explicit, err := svc.Task.Create(service.TaskCreateInput{Title: "explicit", ProjectID: other.ID})
+	require.NoError(t, err)
+	require.NoError(t, d.Prepare(ctx, explicit))
+	f.mu.Lock()
+	require.Equal(t, []any{"project:other"}, f.projectDomains[1])
+	f.mu.Unlock()
+}
+
+func TestDispatchRepairsLegacySealedSessionAndDrainsAfterRestart(t *testing.T) {
+	for _, runID := range []string{"", "team-legacy-run"} {
+		t.Run("run="+runID, func(t *testing.T) {
+			ctx := context.Background()
+			svc := setupService(t)
+			f := newIdentityFixture(t)
+			d := syncFixture(t, svc, f)
+			task, err := svc.Task.Create(service.TaskCreateInput{Title: "legacy pending"})
+			require.NoError(t, err)
+			require.NoError(t, d.Prepare(ctx, task))
+			require.NoError(t, svc.Task.Transition(ctx, task.ID, "doing"))
+			f.set(func() { f.statusDown = true })
+			require.Error(t, d.Tick(ctx))
+			var eventID, raw string
+			require.NoError(t, svc.Store().ReadDB().QueryRow(`SELECT event_id,payload FROM dispatch_status_payloads LIMIT 1`).Scan(&eventID, &raw))
+			var legacy map[string]any
+			require.NoError(t, json.Unmarshal([]byte(raw), &legacy))
+			require.NotEmpty(t, legacy["session_id"])
+			legacy["session_id"] = ""
+			legacy["data"].(map[string]any)["run_id"] = runID
+			legacy["body"] = "original sealed body"
+			encoded, err := json.Marshal(legacy)
+			require.NoError(t, err)
+			w, err := svc.Store().BeginWriteTx(ctx)
+			require.NoError(t, err)
+			_, err = w.Exec(`UPDATE dispatch_status_payloads SET payload=? WHERE event_id=?`, string(encoded), eventID)
+			require.NoError(t, err)
+			require.NoError(t, w.Commit())
+			d.Stop()
+			// The repaired body must also stay stable after an ambiguous response.
+			f.set(func() { f.statusDown = false; f.loseStatus = true })
+			restarted := syncFixture(t, svc, f)
+			require.Error(t, restarted.Tick(ctx))
+			expected := task.ID
+			if runID != "" {
+				expected = runID
+			}
+			accepted := f.events()
+			require.Len(t, accepted, 1)
+			require.Equal(t, "torque-dispatcher:"+expected, accepted[0]["session_id"])
+			legacy["session_id"] = accepted[0]["session_id"]
+			require.Equal(t, legacy, accepted[0])
+			require.NoError(t, restarted.Tick(ctx))
+			var pending int
+			require.NoError(t, svc.Store().ReadDB().QueryRow(`SELECT COUNT(*) FROM dispatch_status_pending`).Scan(&pending))
+			require.Zero(t, pending)
+			require.NoError(t, svc.Store().ReadDB().QueryRow(`SELECT payload FROM dispatch_status_payloads WHERE event_id=?`, eventID).Scan(&raw))
+			var saved map[string]any
+			require.NoError(t, json.Unmarshal([]byte(raw), &saved))
+			require.Equal(t, legacy, saved)
+		})
+	}
+}
+
+func TestDispatchReportsRegistryAndHTTPDeliveryErrorsTogether(t *testing.T) {
+	ctx := context.Background()
+	svc := setupService(t)
+	require.NoError(t, svc.Feature.Enable("projects"))
+	require.NoError(t, svc.Store().CreateProject(&sqlstore.ProjectRecord{ID: "PRJ-UNMAPPED", Name: "unmapped"}))
+	f := newIdentityFixture(t)
+	d := syncFixture(t, svc, f)
+	a, err := svc.Task.Create(service.TaskCreateInput{Title: "registry pending", ProjectID: "PRJ-UNMAPPED"})
+	require.NoError(t, err)
+	b, err := svc.Task.Create(service.TaskCreateInput{Title: "http pending"})
+	require.NoError(t, err)
+	for _, task := range []*sqlstore.TaskRecord{a, b} {
+		require.NoError(t, d.Prepare(ctx, task))
+		require.NoError(t, svc.Task.Transition(ctx, task.ID, "blocked"))
+	}
+	f.set(func() { f.statusDown = true })
+	err = d.Tick(ctx)
+	require.ErrorContains(t, err, "pending Registry for task "+a.ID)
+	require.ErrorContains(t, err, "upstream HTTP 503")
+	require.NotContains(t, err.Error(), "test-credential")
 }
