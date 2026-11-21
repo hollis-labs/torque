@@ -15,6 +15,7 @@ import (
 
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 	"github.com/hollis-labs/torque/internal/service"
+	"github.com/hollis-labs/torque/internal/tetherclient"
 	"github.com/stretchr/testify/require"
 )
 
@@ -668,4 +669,72 @@ func TestDispatchStaleOutageSavePreservesLearnedCanonicalID(t *testing.T) {
 	stale.LastError = "unavailable"
 	require.NoError(t, svc.Store().SaveDispatchWorkstream(context.Background(), stale))
 	require.Equal(t, registryID, taskMeta(t, svc, rec.ID)["workstream_id"])
+}
+
+func TestDispatchOutageAmbiguousRecoveryPreservesFormationBytes(t *testing.T) {
+	for _, initialGate := range []bool{false, true} {
+		t.Run(fmt.Sprint(initialGate), func(t *testing.T) {
+			fake := newFake()
+			fake.loseResponse = true
+			fake.replayStatus = http.StatusServiceUnavailable
+			svc := unitSetup(t, fake, service.UnitConfig{RegistryLaunchContext: initialGate})
+			f := newIdentityFixture(t)
+			f.registryDown = true
+			d := syncFixture(t, svc, f)
+			svc.Unit.SetDispatchSync(d)
+			id := newUnitTask(t, svc, nil)
+			_, e := svc.Unit.Dispatch(context.Background(), service.UnitDispatchInput{TaskID: id})
+			require.Error(t, e)
+			require.Equal(t, 1, fake.runCount())
+			meta := taskMeta(t, svc, id)
+			before := meta["unit_run"].(map[string]any)
+			require.Equal(t, service.UnitForming, before["state"])
+			require.Equal(t, true, before["ambiguous"])
+			frozen, e := json.Marshal(before["formation"])
+			require.NoError(t, e)
+			key := before["key"]
+			replacement := planMeta(nil)
+			replacement["concurrent_note"] = "retain during recovery"
+			payload, e := json.Marshal(replacement)
+			require.NoError(t, e)
+			raw := sql.NullString{String: string(payload), Valid: true}
+			require.NoError(t, svc.Task.Update(id, service.TaskUpdateInput{TaskUpdate: sqlstore.TaskUpdate{Metadata: &raw}}))
+			f.set(func() { f.registryDown = false })
+			require.ErrorContains(t, d.Tick(context.Background()), "awaiting team run id")
+			require.Equal(t, registryID, taskMeta(t, svc, id)["workstream_id"])
+			fake.set(func() { fake.loseResponse = false; fake.replayStatus = 0 })
+			// Toggle deployment configuration after an attempted formation. Recovery
+			// must use the saved request rather than rebuilding it with the new gate.
+			svc.Unit.Configure(tetherclient.New(fake.server(t).URL, "op"), fastCfg(service.UnitConfig{RegistryLaunchContext: !initialGate}))
+			run, e := svc.Unit.Dispatch(context.Background(), service.UnitDispatchInput{TaskID: id})
+			require.NoError(t, e)
+			require.Equal(t, 1, run.Attempt)
+			require.Equal(t, "run-1", run.RunID)
+			require.Equal(t, 1, fake.runCount())
+			meta = taskMeta(t, svc, id)
+			after := meta["unit_run"].(map[string]any)
+			actual, e := json.Marshal(after["formation"])
+			require.NoError(t, e)
+			require.Equal(t, string(frozen), string(actual))
+			require.Equal(t, key, after["key"])
+			require.Equal(t, "retain during recovery", meta["concurrent_note"])
+			require.Equal(t, registryID, after["workstream_id"])
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			require.GreaterOrEqual(t, len(fake.formRequests), 4)
+			first, e := json.Marshal(fake.formRequests[0])
+			require.NoError(t, e)
+			for _, request := range fake.formRequests[1:] {
+				next, e := json.Marshal(request)
+				require.NoError(t, e)
+				require.Equal(t, string(first), string(next))
+			}
+			require.Empty(t, fake.formRequests[0].Launch.WorkstreamID)
+			if initialGate {
+				require.Equal(t, id, fake.formRequests[0].Launch.TaskID)
+			} else {
+				require.Empty(t, fake.formRequests[0].Launch.TaskID)
+			}
+		})
+	}
 }
