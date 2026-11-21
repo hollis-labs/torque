@@ -45,7 +45,8 @@ object. Explicit custom pin configurations without this map retain their base
 Sol pin; an explicit host absent from the map is refused.
 
 Before the first formation call, Torque persists the selected host and complete
-formation request in `metadata.unit_run.placement` and `.formation`. Ambiguous
+formation request in `metadata.unit_run.placement` and `.formation`. The logical
+workstream key and project are also sealed on the attempt. Ambiguous
 retries, including after restart, reuse that request despite subsequent pin,
 pool or plan changes. Pre-existing forming records without a snapshot retain
 the original base-pin formation path. Existing global `TORQUE_UNIT_MAX_ACTIVE`
@@ -132,7 +133,7 @@ update (an invalid plan is refused with the field named).
 
 | Field | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `workstream_id` | yes | | Tether workstream the unit runs under |
+| `workstream_id` | yes | | logical Registry ensure key / Ops workstream ID |
 | `goal` | yes | | what to achieve |
 | `done_when` | yes | | list (or newline-separated string) of criteria |
 | `scope.in`, `scope.out` | no | | what the team may and may not touch |
@@ -275,3 +276,98 @@ with `clear_unconfirmed`.
   The exact status string of a dissolved run is not confirmed against a live
   Tether; the active-member check is the backstop.
 - Workstream ids are supplied in the plan; Torque does not create them.
+
+## Registry identity and status stream
+
+Torque can ensure Registry workstreams and forward dispatch status to Tesseract.
+Configure the **serve process** with endpoint URLs and credential **file paths**:
+
+| Setting | Meaning |
+| --- | --- |
+| `TORQUE_REGISTRY_URL` | Registry HTTP origin (optional; enables identity preparation) |
+| `TORQUE_REGISTRY_TOKEN_FILE` | Required with Registry; authority-mapped dispatcher credential file |
+| `TORQUE_TESSERACT_URL` | Tesseract HTTP origin (optional; requires Registry configuration) |
+| `TORQUE_TESSERACT_TOKEN_FILE` | Required with Tesseract; status writer credential file |
+| `TORQUE_STATUS_PROJECT` | Namespace project for tasks without a project; default `torque` |
+| `TORQUE_STATUS_AUTHOR` | Event author agent ID; default `torque-dispatcher` |
+
+Credentials are read for every request, so rotating a provisioned file does not
+require a Torque restart. There are no inline-token settings for these clients.
+Provisioning is separate: Registry needs `registry.write` and
+`registry.workstream.ensure` plus the dispatcher's authority mapping; Tesseract
+needs event-write access to the intended project status namespaces. Do not copy
+credentials into a task, plan, environment token value, or repository.
+
+The logical ensure key is `metadata.unit_plan.workstream_id` for units. For
+executor dispatch it is `metadata.ops_id`, then `metadata.workstream_key`, then a
+legacy noncanonical `metadata.workstream_id`, otherwise the task ID. The logical
+key is retained after stamping; it never becomes a caller-minted Registry ID.
+Registry receives `POST /v1/workstreams/ensure` with `{key, project_urns?}` and a
+stable `Idempotency-Key` derived from the project and logical key. Torque does
+not supply a name or alter authored Registry attributes. Registry owns the
+canonical `workstream:<ULID>`; different tasks with the same key/project resolve
+to the same Registry identity under the configured service authority.
+
+Torque stamps `metadata.workstream_id` and the dispatcher-owned
+`metadata.dispatch_workstream` (`key`, `id`, `state`, `last_error`), preserves the
+original logical key in the plan, and stamps `metadata.unit_run.workstream_id`
+and executor run references. Metadata edits preserve the dispatcher's binding.
+A definite `workstream_closed` refuses a fresh dispatch and leaves a closed
+marker; choose a new logical key to start new work. No local fallback mint or
+generic Registry create is used.
+
+Before launch, one ensure attempt has a 500 ms deadline. An outage or unreadable
+credential file leaves a durable `pending` marker and dispatch proceeds.
+Background retries run every five seconds, with a bounded batch of 100 pending
+bindings; other tasks do not wait on that task's network request. Recovery
+stamps the task and its corresponding executor run records. Old binding keys
+and event associations are retained, so changing a plan during an outage cannot
+reattribute already-recorded events to a later workstream.
+
+The status writer reads the existing transactional `event_outbox`, not the
+in-process transition hooks. It projects executor dispatch/running, review,
+blocked, done and failed transitions and unit lifecycle `dispatched`, `formed`,
+`RESULT`, `dissolved`, and failure events to `POST /v1/event/write`. Lifecycle
+events commit atomically with `metadata.unit_run`; unchanged saves and rolled
+back changes produce no duplicate lifecycle entries. Task statuses remain
+Torque's canonical vocabulary (`doing` projects to stream state `running`);
+`failed` is a stream/run state, not a new task status.
+
+Each outbound event follows the Ops `eventBody` shape: namespace
+`project/<task-project-or-fallback>/event/status`, canonical `workstream_id`,
+`summary`, `body`, `author.agent_id`, `session_id`, and `consumer_state`
+(`state`, `subject_urn`, `task`, `run`). Its `data` includes `task_id`, `run_id`,
+`workstream_id`, the original Torque event ID and the unit dispatch key when
+applicable. Before a team/run exists its run ID is empty, rather than invented.
+The exact outbound body is sealed in SQLite before sending, with an
+idempotency key based on the original event ID. Restart, timeout, or loss of an
+accepted response replays that same body/key. Failed deliveries retain the
+cursor; retention cannot prune unacknowledged status entries. A pending Registry
+binding delays status delivery but never the launched team's execution.
+
+The reader starts at the outbox head on first enable; it does not backfill old
+dispatch history. Subsequent starts resume its persisted `tesseract-status-v1`
+cursor. SQLite's commit-ordered outbox is required. A pruned log or cursor beyond a restored log head is
+reported as a cursor gap, never silently skipped. Disabling the writer does not
+remove its cursor or pending records; retention remains pinned until an
+operator explicitly retires that consumer or delivery resumes.
+
+Launcher correlation registration belongs to CW-20261121-0030. Tether's local
+workstream reconciliation and compaction lineage require a coordinated Tether
+change; this Torque client does not alter that store, deploy a service, or mint
+credentials.
+
+### Tether binding boundary
+
+The audited Tether team HTTP contract (`internal/api/teams.go`, `TeamRequest`)
+accepts `team` and `launch`, with no workstream selector. Unknown top-level
+fields are rejected. Torque therefore records the canonical ID on its own
+`unit_run` and in the orchestrator's brief, without sending an unsupported
+`workstream_id` field. The existing session assignment route references a
+Tether-local workstream row and is not a substitute for Registry-owned identity.
+A Tether follow-up must accept the Registry ID at team formation, propagate it
+to each launched session, and define late binding after an ensure outage.
+Until that contract ships, team/session-side stamping is explicitly unverified;
+Torque-side task, run and event stamping is implemented here. Formation snapshots
+remain unchanged across ambiguous retries, including an outage followed by
+Registry recovery.

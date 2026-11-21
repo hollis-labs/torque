@@ -230,7 +230,7 @@ func (p *Plan) applyDefaults() {
 // Validate checks a plan that already has defaults applied.
 func (p Plan) Validate() error {
 	if p.WorkstreamID == "" {
-		return fmt.Errorf("unit_plan.workstream_id: required (the Tether workstream id the unit runs under)")
+		return fmt.Errorf("unit_plan.workstream_id: required (the logical Registry ensure key / Ops workstream id)")
 	}
 	if p.Goal == "" {
 		return fmt.Errorf("unit_plan.goal: required")

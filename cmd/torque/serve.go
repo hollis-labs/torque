@@ -242,6 +242,22 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 	sched.SetLandingGate(svc.Task.LandingCheck)
 	sched.SetLandingEvaluator(svc.Task.LandingEvaluate)
 	svc.Workstream.SetGo(sched.Enabled)
+	dispatchSyncConfig := service.DispatchSyncConfigFromEnv()
+	if dispatchSyncConfig.RegistryURL != "" || dispatchSyncConfig.TesseractURL != "" {
+		dispatchSync, err := service.NewDispatchSync(store, dispatchSyncConfig)
+		if err != nil {
+			return err
+		}
+		dispatchCtx, dispatchCancel := context.WithCancel(context.Background())
+		defer dispatchCancel()
+		if err := dispatchSync.Start(dispatchCtx); err != nil {
+			return err
+		}
+		defer dispatchSync.Stop()
+		svc.Unit.SetDispatchSync(dispatchSync)
+		sched.SetDispatchIdentity(dispatchSync.Prepare)
+	}
+
 	// Tether reads (capacity, team-run state) are consulted only when
 	// TORQUE_TETHER_URL is set; Tether has not shipped them yet (CW-20261011-0015).
 	if tc := tetherclient.New(os.Getenv("TORQUE_TETHER_URL"), os.Getenv("TORQUE_TETHER_TOKEN")); tc != nil {

@@ -298,6 +298,12 @@ func (w *WriteTx) appendEvent(sp eventSpec) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("append event: %w", err)
 	}
+	if sp.Scope.TaskID != "" {
+		if _, err = w.tx.Exec(`INSERT INTO dispatch_event_workstreams(event_id,task_id,logical_key,project_id,unit_run_id,is_unit) SELECT ?,w.task_id,w.logical_key,w.project_id,COALESCE(json_extract(CASE WHEN json_valid(t.metadata) THEN t.metadata ELSE '{}' END,'$.unit_run.run_id'),''),CASE WHEN json_type(CASE WHEN json_valid(t.metadata) THEN t.metadata ELSE '{}' END,'$.unit_plan') IS NOT NULL THEN 1 ELSE 0 END FROM dispatch_workstreams w JOIN tasks t ON t.id=w.task_id WHERE w.task_id=? AND w.active=1`, ev.ID, sp.Scope.TaskID); err != nil {
+			return "", err
+		}
+	}
+
 	w.wakeOutbox = true
 	w.lastEventID = ev.ID
 	return ev.ID, nil

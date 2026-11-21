@@ -660,6 +660,15 @@ func (w *WriteTx) CreateTask(t *TaskRecord) error {
 // SetTaskTags/SetTaskDependencies in the same WriteTx instead of as
 // independent calls (FIX-007).
 func (w *WriteTx) UpdateTask(id string, u TaskUpdate) error {
+	if u.UnitRun != nil {
+		var old sql.NullString
+		if err := w.tx.QueryRow(`SELECT json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.unit_run') FROM tasks WHERE id=?`, id).Scan(&old); err != nil {
+			return err
+		}
+		if err := w.recordUnitLifecycle(id, old.String, *u.UnitRun); err != nil {
+			return err
+		}
+	}
 	if u.PhaseID == nil && u.ParentID == nil {
 		return updateTaskExec(w.tx, id, u)
 	}
