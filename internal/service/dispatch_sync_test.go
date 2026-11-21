@@ -227,7 +227,7 @@ func TestDispatchStatusUnitLifecycleAndAcceptedLostResponse(t *testing.T) {
 		require.Equal(t, "torque-dispatcher", body["author"].(map[string]any)["agent_id"])
 		states[body["consumer_state"].(map[string]any)["state"].(string)]++
 	}
-	require.Equal(t, map[string]int{"started": 2, "progress": 1, "done": 1, "note": 1, "review": 1}, states)
+	require.Equal(t, map[string]int{"started": 1, "progress": 1, "done": 1, "note": 2, "review": 1}, states)
 }
 func TestDispatchStatusExecutorTransitionsAndRetry(t *testing.T) {
 	svc := setupService(t)

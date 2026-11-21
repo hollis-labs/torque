@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -72,11 +71,12 @@ type SessionLookup interface {
 type AssignmentService struct {
 	store    *sqlstore.Store
 	sessions SessionLookup // nil: session liveness is not checked
-	ops      *OpsSync      // nil: no Ops status post on expiry
-	now      func() time.Time
-	mu       sync.Mutex
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	// status, when set, posts assignment_expired to the status stream (DispatchSync).
+	status func(ctx context.Context, t *sqlstore.TaskRecord, a *TaskAssignment, text string) error
+	now    func() time.Time
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 func NewAssignmentService(store *sqlstore.Store) *AssignmentService {
@@ -86,11 +86,9 @@ func NewAssignmentService(store *sqlstore.Store) *AssignmentService {
 // SetSessions installs the Tether session lookup used to detect dead holders.
 func (s *AssignmentService) SetSessions(l SessionLookup) { s.sessions = l }
 
-// SetOps installs the Ops status sink for expiry posts.
-func (s *AssignmentService) SetOps(o *OpsSync) {
-	if o.Enabled() {
-		s.ops = o
-	}
+// SetStatusSink installs the status-stream writer for expiry events.
+func (s *AssignmentService) SetStatusSink(fn func(ctx context.Context, t *sqlstore.TaskRecord, a *TaskAssignment, text string) error) {
+	s.status = fn
 }
 
 const assignmentCols = `task_id,assignee_urn,assignee_name,tether_session_id,team_run_id,claim_id,source,state,assigned_at,lease_expires_at,ended_at,end_reason`
@@ -405,6 +403,7 @@ func (s *AssignmentService) sweep(ctx context.Context) error {
 			continue
 		}
 		if changed && state == "expired" {
+			a.State, a.EndReason = state, reason
 			s.announceExpiry(ctx, t, a, reason)
 		}
 	}
@@ -457,21 +456,10 @@ func (s *AssignmentService) announceExpiry(ctx context.Context, t *sqlstore.Task
 	if err := s.store.AddComment(&sqlstore.CommentRecord{EntityType: "task", EntityID: t.ID, Author: "torque-assignments", Content: text}); err != nil {
 		log.Printf("[assignments] comment %s: %v", t.ID, err)
 	}
-	if s.ops == nil {
+	if s.status == nil {
 		return
 	}
-	args := map[string]any{
-		"task": t.ID, "state": "note", "kind": "assignment_expired",
-		"summary":         truncate(fmt.Sprintf("%s assignment expired (%s): %s", t.ID, reason, t.Title), 500),
-		"body":            text,
-		"ref":             "torque://task/" + t.ID,
-		"idempotency_key": "torque-assignment-expired-" + t.ID + "-" + a.AssignedAt,
-	}
-	if id := OpsIDOf(t); id != "" {
-		args["ops_id"] = id
-	}
-	raw, _ := json.Marshal(args)
-	if err := s.ops.postStatus(ctx, raw); err != nil {
-		log.Printf("[assignments] ops post %s: %v", t.ID, err)
+	if err := s.status(ctx, t, a, text); err != nil {
+		log.Printf("[assignments] status post %s: %v", t.ID, err)
 	}
 }

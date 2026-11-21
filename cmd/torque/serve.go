@@ -267,6 +267,7 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 		defer dispatchSync.Stop()
 		svc.Unit.SetDispatchSync(dispatchSync)
 		sched.SetDispatchIdentity(dispatchSync.Prepare)
+		svc.Assignment.SetStatusSink(dispatchSync.PostAssignmentExpired)
 	}
 
 	// Tether reads (capacity, team-run state) are consulted only when
@@ -294,7 +295,6 @@ func runServe(ctx context.Context, ln net.Listener, sec httpserver.Security) err
 		svc.Assignment.SetSessions(uc)
 	}
 	// G6 (CW-20261121-0148): assignments expire when their holder is gone.
-	svc.Assignment.SetOps(opsSync)
 	assignCtx, assignCancel := context.WithCancel(context.Background())
 	defer assignCancel()
 	svc.Assignment.Start(assignCtx, 30*time.Second)

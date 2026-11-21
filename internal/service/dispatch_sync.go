@@ -80,9 +80,7 @@ func (d *DispatchSync) SetOps(o *OpsSync) {
 	}
 }
 
-func (d *DispatchSync) statusEnabled() bool {
-	return d.cfg.TesseractURL != "" || d.ops.Enabled()
-}
+func (d *DispatchSync) statusEnabled() bool { return d.cfg.TesseractURL != "" }
 
 const statusConsumer = "tesseract-status-v1"
 const statusScanConsumer = "tesseract-status-scan-v1"
@@ -433,16 +431,6 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 		if err != nil {
 			return err
 		}
-		var probe struct {
-			Namespace string `json:"namespace"`
-		}
-		_ = json.Unmarshal(raw, &probe)
-		if probe.Namespace == "" && d.ops.Enabled() {
-			return d.ops.postStatus(ctx, raw)
-		}
-		if d.cfg.TesseractURL == "" {
-			return nil // sealed for direct Tesseract before the Ops cutover; Ops now owns the stream
-		}
 		_, err = d.post(ctx, d.cfg.TesseractURL, "/v1/event/write", d.cfg.TesseractTokenFile, "torque-status-"+ev.ID, json.RawMessage(raw), nil)
 		return err
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -450,9 +438,6 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 	}
 	if ev.Scope == nil || ev.Scope.TaskID == "" {
 		return nil
-	}
-	if d.ops.Enabled() {
-		return d.deliverOps(ctx, entry)
 	}
 	var p struct {
 		State        string `json:"state"`
@@ -469,8 +454,10 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 	switch ev.Kind {
 	case "unit.lifecycle":
 		switch p.State {
-		case "dispatched", "formed":
+		case "dispatched":
 			state = "started"
+		case "formed":
+			state = "note" // dispatched already said started; formed is not a second start
 		case "running":
 			state = "progress"
 		case "RESULT":
@@ -580,6 +567,7 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 	if project == "" {
 		project = "agent-os"
 	}
+	opsID := OpsIDOf(t)
 	key := "torque-status-" + ev.ID
 	body := map[string]any{
 		"namespace":     "project/" + project + "/event/status",
@@ -591,11 +579,13 @@ func (d *DispatchSync) deliver(ctx context.Context, entry sqlstore.OutboxEvent) 
 		"data": map[string]any{
 			"task_id": t.ID, "run_id": runID, "workstream_id": ws,
 			"event_id": ev.ID, "dispatch_key": p.DispatchKey, "transition": p.State,
+			"ops_id": opsID,
 		},
 		"consumer_state": map[string]any{
 			"state": state, "subject_urn": "msg://task/torque/" + t.ID,
 			"task": t.ID, "run": runID,
 			"task_id": t.ID, "run_id": runID, "workstream_key": r.Key,
+			"ops_id": opsID, "kind": "task_" + state,
 		},
 		"idempotency_key": key,
 	}
@@ -660,3 +650,56 @@ func (d *DispatchSync) projectScope(localID string) (registryProject, namespace 
 }
 
 var projectSlug = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+// opsAwaitingDefault is who an assignment_expired event waits on when the item's
+// team.lead is not known to Torque: the Lead Orchestrator (design 5.2).
+const opsAwaitingDefault = "msg://agent/agent-mux/agt_hlg0h0e50u"
+
+// PostAssignmentExpired writes the G6 event to the task's status stream: state
+// blocked, kind assignment_expired, with the stale holder in consumer_state.
+// Idempotent on the task and the assignment's start.
+func (d *DispatchSync) PostAssignmentExpired(ctx context.Context, t *sqlstore.TaskRecord, a *TaskAssignment, text string) error {
+	if d == nil || d.cfg.TesseractURL == "" {
+		return nil
+	}
+	project := ""
+	ws := ""
+	if r, e := d.store.DispatchWorkstream(ctx, t.ID); e == nil {
+		project, ws = r.NamespaceProject, r.ID
+	}
+	if project == "" {
+		_, project = d.projectScope(t.ProjectID.String)
+	}
+	if m := taskMetadata(t); ws == "" {
+		if v, _ := m["workstream_id"].(string); canonicalWorkstream.MatchString(v) {
+			ws = v
+		}
+	}
+	awaiting := os.Getenv("TORQUE_OPS_AWAITING_DEFAULT")
+	if awaiting == "" {
+		awaiting = opsAwaitingDefault
+	}
+	opsID := OpsIDOf(t)
+	key := "torque-assignment-expired-" + t.ID + "-" + a.AssignedAt
+	body := map[string]any{
+		"namespace":     "project/" + project + "/event/status",
+		"workstream_id": ws,
+		"summary":       truncate(fmt.Sprintf("%s assignment expired (%s): %s", t.ID, a.EndReason, t.Title), 500),
+		"body":          text,
+		"author":        map[string]any{"agent_id": d.cfg.Author},
+		"session_id":    "torque-assignments:" + t.ID,
+		"data": map[string]any{
+			"task_id": t.ID, "run_id": a.TeamRunID, "workstream_id": ws, "ops_id": opsID,
+			"end_reason": a.EndReason, "source": a.Source,
+		},
+		"consumer_state": map[string]any{
+			"state": "blocked", "kind": "assignment_expired", "subject_urn": "msg://task/torque/" + t.ID,
+			"task": t.ID, "task_id": t.ID, "run": a.TeamRunID, "run_id": a.TeamRunID, "ops_id": opsID,
+			"assignee_urn": a.AssigneeURN, "tether_session_id": a.TetherSessionID, "assigned_at": a.AssignedAt,
+			"awaiting": awaiting,
+		},
+		"idempotency_key": key,
+	}
+	_, e := d.post(ctx, d.cfg.TesseractURL, "/v1/event/write", d.cfg.TesseractTokenFile, key, body, nil)
+	return e
+}

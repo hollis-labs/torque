@@ -52,10 +52,11 @@ func TestAssignmentOwnerProjectionWhenNothingStronger(t *testing.T) {
 func TestAssignmentUnitRunFailedExpiresAndKeepsHolder(t *testing.T) {
 	svc := setupService(t)
 	ctx := context.Background()
-	f := newOpsFixture(t)
-	o, e := service.NewOpsSync(svc.Store(), service.OpsSyncConfig{URL: f.srv.URL, TokenFile: f.file})
-	require.NoError(t, e)
-	svc.Assignment.SetOps(o)
+	var posted []map[string]any
+	svc.Assignment.SetStatusSink(func(_ context.Context, tk *sqlstore.TaskRecord, a *service.TaskAssignment, text string) error {
+		posted = append(posted, map[string]any{"task": tk.ID, "reason": a.EndReason, "urn": a.AssigneeURN, "text": text})
+		return nil
+	})
 	task, e := svc.Task.Create(service.TaskCreateInput{Title: "unit work", Metadata: map[string]any{"ops_id": "ops-system-of-record"}})
 	require.NoError(t, e)
 	require.NoError(t, svc.Task.Transition(ctx, task.ID, "doing"))
@@ -78,10 +79,9 @@ func TestAssignmentUnitRunFailedExpiresAndKeepsHolder(t *testing.T) {
 	require.Equal(t, "team-abc", a.TeamRunID, "the stale holder is kept")
 	require.NotEmpty(t, a.EndedAt)
 
-	posts := f.posted()
-	require.Len(t, posts, 1)
-	require.Equal(t, "assignment_expired", posts[0]["kind"])
-	require.Equal(t, "ops-system-of-record", posts[0]["ops_id"])
+	require.Len(t, posted, 1)
+	require.Equal(t, "session_ended", posted[0]["reason"])
+	require.Equal(t, "msg://agent/agent-mux/team-orchestrator#team-abc", posted[0]["urn"])
 	comments, e := svc.Store().ListComments(task.ID)
 	require.NoError(t, e)
 	require.Len(t, comments, 1)

@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,25 +16,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hollis-labs/libs/harness/core/adapters/runtimeevents/catalog"
 	"github.com/hollis-labs/torque/internal/persistence/sqlstore"
 )
 
-// Ops system of record (ops/v2 contract, caster://ops/design.system-of-record-v2).
+// Ops system of record (ops/v2 contract rev 3, caster://ops/design.system-of-record-v2).
 //
-// G1 (CW-20261121-0146): every task carries an Ops item id. A task without one
-// inherits its parent's (walking up through plans), and failing that Torque asks
-// the Ops service to create or return an item with item_intake, keyed
-// torque:<epic id or task id>. The create is never refused: an intake that cannot
-// complete is parked in ops_intake_pending and retried.
+// G1 (CW-20261121-0146): metadata.ops_id (the bare Ops item slug) is the key
+// field. A task without one is linked when it first moves to doing or is
+// dispatched: inherit from the parent chain (plans included), then from its
+// epic, else assign the project's unfiled item unfiled-<project slug> and set
+// metadata.unfiled=true. The unfiled item is created once through Ops
+// item_intake (intake_key torque:unfiled:<project>); its id is deterministic, so
+// linking never waits on Ops. Tasks are never refused, and Torque never mints a
+// per-task workstream: the Registry ensure key is the ops_id. At create only
+// inheritance runs (no unfiled assignment).
 //
-// G2 (CW-20261121-0147): task status transitions are delivered to the Ops
-// service's status_post (see DispatchSync.deliverOps) carrying the item id, the
-// canonical Registry workstream and the task.
-//
-// The item id is stamped as metadata.ops_id (authoritative) and, when the task
-// has no canonical Registry id yet, as metadata.workstream_id, which is where Ops
-// linking writes it. metadata.ops_link records where it came from.
+// metadata.ops_link records how the id was found (source, from).
 
 // OpsSyncConfig holds the Ops service endpoint and a credential FILE path.
 type OpsSyncConfig struct {
@@ -153,8 +149,8 @@ func (o *OpsSync) Stop() {
 	o.wg.Wait()
 }
 
-// Tick links newly created tasks (every create path, including requests and
-// internal reviewers) and retries due intakes.
+// Tick runs create-time inheritance for new tasks (every create path, including
+// requests and internal reviewers) and retries due unfiled-item intakes.
 func (o *OpsSync) Tick(ctx context.Context) error {
 	if !o.Enabled() {
 		return nil
@@ -211,32 +207,40 @@ func (o *OpsSync) saveScanCursor(ctx context.Context, rowid int64) error {
 }
 
 // OpsIDOf returns the Ops item id a task already carries, without I/O:
-// metadata.ops_id, then workstream_key, then a non-canonical metadata.workstream_id
-// (what ops item_link writes). unit_plan.workstream_id is a correlation label in
-// ops/v2 (design 2.2 correlation.labels), not an item id, so it is not used here.
+// metadata.ops_id, then the legacy aliases unit_plan.workstream_id and
+// workstream_key, then a non-canonical metadata.workstream_id (what ops
+// item_link writes). A Torque task id is never an item id.
 func OpsIDOf(t *sqlstore.TaskRecord) string {
 	m := taskMetadata(t)
 	str := func(v any) string { s, _ := v.(string); return strings.TrimSpace(s) }
-	for _, k := range []string{"ops_id", "workstream_key", "workstream_id"} {
-		if s := str(m[k]); opsSlug.MatchString(s) && !torqueTaskID.MatchString(s) {
+	ok := func(s string) bool { return opsSlug.MatchString(s) && !torqueTaskID.MatchString(s) }
+	if s := str(m["ops_id"]); ok(s) {
+		return s
+	}
+	if p, isMap := m["unit_plan"].(map[string]any); isMap {
+		if s := str(p["workstream_id"]); ok(s) {
+			return s
+		}
+	}
+	for _, k := range []string{"workstream_key", "workstream_id"} {
+		if s := str(m[k]); ok(s) {
 			return s
 		}
 	}
 	return ""
 }
 
-// OpsLinkResult says how a task got (or is waiting for) its item.
+// OpsLinkResult says how a task got its item.
 type OpsLinkResult struct {
 	OpsID  string
-	Source string // self | parent | plan | intake | pending
-	From   string // the task or intake key it came from
+	Source string // self | parent | plan | epic | unfiled
+	From   string // the task, epic or intake key it came from
 }
 
-// Link makes sure a task carries an Ops item id. withIntake=true tries the intake
-// call inline (dispatch path); otherwise a needed intake is queued and attempted
-// by the background loop right away. It never refuses: on failure the task is
-// marked pending and the error is only returned for logging.
-func (o *OpsSync) Link(ctx context.Context, taskID string, withIntake bool) (OpsLinkResult, error) {
+// Link makes sure a task carries metadata.ops_id. atWork=false (create time)
+// only inherits; atWork=true (first doing, dispatch, a status event) falls back
+// to the project's unfiled item. It never refuses and never mints per task.
+func (o *OpsSync) Link(ctx context.Context, taskID string, atWork bool) (OpsLinkResult, error) {
 	if !o.Enabled() {
 		return OpsLinkResult{}, nil
 	}
@@ -247,15 +251,15 @@ func (o *OpsSync) Link(ctx context.Context, taskID string, withIntake bool) (Ops
 		}
 		return OpsLinkResult{}, e
 	}
+	m := taskMetadata(t)
 	if id := OpsIDOf(t); id != "" {
 		res := OpsLinkResult{OpsID: id, Source: "self", From: t.ID}
-		m := taskMetadata(t)
 		if s, _ := m["ops_id"].(string); s != id {
-			return res, o.stamp(ctx, t.ID, res)
+			return res, o.stamp(ctx, t.ID, res, false)
 		}
 		return res, nil
 	}
-	// Inherit: parent chain (plans are parents of their phase tasks).
+	// Parent chain; plans are the parents of their phase tasks.
 	seen := map[string]bool{t.ID: true}
 	cur := t
 	for depth := 0; depth < 12 && cur.ParentID.Valid && cur.ParentID.String != "" && !seen[cur.ParentID.String]; depth++ {
@@ -264,158 +268,168 @@ func (o *OpsSync) Link(ctx context.Context, taskID string, withIntake bool) (Ops
 		if e != nil {
 			break
 		}
-		if id := OpsIDOf(p); id != "" {
+		if id := OpsIDOf(p); id != "" && !strings.HasPrefix(id, "unfiled-") {
 			src := "parent"
 			if p.Kind == "plan" {
 				src = "plan"
 			}
 			res := OpsLinkResult{OpsID: id, Source: src, From: p.ID}
-			return res, o.stamp(ctx, t.ID, res)
+			return res, o.stamp(ctx, t.ID, res, false)
 		}
 		cur = p
 	}
-	// No item: intake keyed on the epic (so an epic's tasks share one item) or the task.
-	key, title := "torque:"+t.ID, t.Title
+	// Epic: epics carry no metadata, so the epic's item is the one its tasks were
+	// filed under (most recently updated, unfiled ones excluded).
 	if t.EpicID.Valid && t.EpicID.String != "" {
-		key = "torque:" + t.EpicID.String
-		if ep, e := o.store.GetEpic(t.EpicID.String); e == nil && ep.Name != "" {
-			title = ep.Name
+		var id string
+		err := o.store.ReadDB().QueryRowContext(ctx, `SELECT json_extract(metadata,'$.ops_id') FROM tasks
+ WHERE epic_id=? AND id<>? AND json_valid(metadata) AND COALESCE(json_extract(metadata,'$.ops_id'),'')<>''
+ AND json_extract(metadata,'$.ops_id') NOT LIKE 'unfiled-%' ORDER BY updated_at DESC LIMIT 1`, t.EpicID.String, t.ID).Scan(&id)
+		if err == nil && opsSlug.MatchString(id) {
+			res := OpsLinkResult{OpsID: id, Source: "epic", From: t.EpicID.String}
+			return res, o.stamp(ctx, t.ID, res, false)
 		}
 	}
-	if e := o.enqueue(ctx, t, key, title); e != nil {
-		return OpsLinkResult{}, e
+	if !atWork {
+		return OpsLinkResult{}, nil
 	}
-	if !withIntake {
-		return OpsLinkResult{Source: "pending", From: key}, nil
+	project := t.ProjectID.String
+	if project == "" {
+		project = os.Getenv("TORQUE_UNIT_DEFAULT_PROJECT")
 	}
-	return o.attempt(ctx, t.ID)
+	slug := o.projectSlug(project)
+	res := OpsLinkResult{OpsID: truncate("unfiled-"+slug, 64), Source: "unfiled", From: "torque:unfiled:" + project}
+	if e := o.enqueueUnfiled(ctx, project, slug, res.OpsID, t.ID); e != nil {
+		return res, e
+	}
+	return res, o.stamp(ctx, t.ID, res, true)
 }
 
-func (o *OpsSync) stamp(ctx context.Context, taskID string, r OpsLinkResult) error {
+// projectSlug resolves a local PRJ id to its namespace slug (Registry
+// project:<slug>, else a slug-valid project name, else agent-os).
+func (o *OpsSync) projectSlug(localID string) string {
+	if localID == "" {
+		return "agent-os"
+	}
+	p, err := o.store.GetProject(localID)
+	if err != nil {
+		return "agent-os"
+	}
+	if p.ExternalAuthority == "registry" && strings.HasPrefix(p.ExternalID, "project:") {
+		if s := strings.TrimPrefix(p.ExternalID, "project:"); projectSlug.MatchString(s) {
+			return s
+		}
+	}
+	if projectSlug.MatchString(p.Name) {
+		return p.Name
+	}
+	return "agent-os"
+}
+
+func (o *OpsSync) stamp(ctx context.Context, taskID string, r OpsLinkResult, unfiled bool) error {
 	link, _ := json.Marshal(map[string]any{"source": r.Source, "from": r.From, "at": o.now().UTC().Format(time.RFC3339)})
 	w, e := o.store.BeginWriteTx(ctx)
 	if e != nil {
 		return e
 	}
 	defer w.Rollback()
-	// workstream_id gets the slug only while it is not a canonical Registry id:
-	// the Registry binding stays authoritative for that key once minted.
-	if _, e = w.Exec(`UPDATE tasks SET metadata=json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,
- '$.ops_id',?,'$.ops_link',json(?),
- '$.workstream_id',CASE WHEN json_valid(metadata) AND json_extract(metadata,'$.workstream_id') LIKE 'workstream:%' THEN json_extract(metadata,'$.workstream_id') ELSE ? END)
- WHERE id=?`, r.OpsID, string(link), r.OpsID, taskID); e != nil {
-		return e
+	unfiledSQL := `json_remove(%s,'$.unfiled')`
+	if unfiled {
+		unfiledSQL = `json_set(%s,'$.unfiled',json('true'))`
 	}
-	if _, e = w.Exec(`DELETE FROM ops_intake_pending WHERE task_id=?`, taskID); e != nil {
+	// workstream_id keeps a canonical Registry id; otherwise it mirrors the slug,
+	// which is what ops item_link writes.
+	base := `json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,
+ '$.ops_id',?,'$.ops_link',json(?),
+ '$.workstream_id',CASE WHEN json_valid(metadata) AND json_extract(metadata,'$.workstream_id') LIKE 'workstream:%' THEN json_extract(metadata,'$.workstream_id') ELSE ? END)`
+	if _, e = w.Exec(`UPDATE tasks SET metadata=`+fmt.Sprintf(unfiledSQL, base)+` WHERE id=?`, r.OpsID, string(link), r.OpsID, taskID); e != nil {
 		return e
 	}
 	return w.Commit()
 }
 
-func (o *OpsSync) enqueue(ctx context.Context, t *sqlstore.TaskRecord, key, title string) error {
-	now := o.now().UTC().Format(time.RFC3339Nano)
+// enqueueUnfiled records (once per project) that the unfiled item must exist.
+func (o *OpsSync) enqueueUnfiled(ctx context.Context, project, slug, itemID, origin string) error {
 	w, e := o.store.BeginWriteTx(ctx)
 	if e != nil {
 		return e
 	}
 	defer w.Rollback()
-	if _, e = w.Exec(`INSERT INTO ops_intake_pending(task_id,intake_key,title,project_id,next_at,created_at) VALUES (?,?,?,?,?,?)
- ON CONFLICT(task_id) DO UPDATE SET intake_key=excluded.intake_key,title=excluded.title,project_id=excluded.project_id`,
-		t.ID, key, title, t.ProjectID.String, now, now); e != nil {
-		return e
-	}
-	link, _ := json.Marshal(map[string]any{"source": "pending", "from": key, "at": now})
-	if _, e = w.Exec(`UPDATE tasks SET metadata=json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,'$.ops_link',json(?)) WHERE id=?`, string(link), t.ID); e != nil {
+	if _, e = w.Exec(`INSERT OR IGNORE INTO ops_intake_pending(intake_key,item_id,title,project_id,origin_task,next_at) VALUES (?,?,?,?,?,?)`,
+		"torque:unfiled:"+project, itemID, "Unfiled work: "+slug, project, origin, o.now().UTC().Format(time.RFC3339Nano)); e != nil {
 		return e
 	}
 	return w.Commit()
 }
 
 func (o *OpsSync) retryDue(ctx context.Context) error {
-	rows, e := o.store.ReadDB().QueryContext(ctx, `SELECT task_id FROM ops_intake_pending WHERE next_at<=? ORDER BY attempts,next_at LIMIT 50`, o.now().UTC().Format(time.RFC3339Nano))
+	rows, e := o.store.ReadDB().QueryContext(ctx, `SELECT intake_key,item_id,title,project_id,origin_task,attempts FROM ops_intake_pending WHERE done_at='' AND next_at<=? ORDER BY attempts,next_at LIMIT 20`, o.now().UTC().Format(time.RFC3339Nano))
 	if e != nil {
 		return e
 	}
-	var ids []string
+	type intake struct {
+		key, id, title, project, origin string
+		attempts                        int
+	}
+	var due []intake
 	for rows.Next() {
-		var id string
-		if e = rows.Scan(&id); e != nil {
+		var in intake
+		if e = rows.Scan(&in.key, &in.id, &in.title, &in.project, &in.origin, &in.attempts); e != nil {
 			rows.Close()
 			return e
 		}
-		ids = append(ids, id)
+		due = append(due, in)
 	}
 	rows.Close()
 	var errs []error
-	for _, id := range ids {
-		if _, e := o.attempt(ctx, id); e != nil && !errors.Is(e, errOpsUnavailable) {
-			errs = append(errs, fmt.Errorf("intake %s: %w", id, e))
+	for _, in := range due {
+		args := map[string]any{
+			"intake_key": in.key, "id": in.id, "title": in.title, "stage": "in_flight",
+			"source": "torque_auto", "origin": map[string]any{"kind": "torque.task", "id": in.origin},
+			"idempotency_key": "torque-intake-" + in.key,
+		}
+		if in.project != "" {
+			args["project"] = in.project
+		}
+		var out struct {
+			ID   string `json:"id"`
+			Item struct {
+				ID string `json:"id"`
+			} `json:"item"`
+		}
+		callErr := o.call(ctx, "item_intake", in.origin, args, &out)
+		got := out.ID
+		if got == "" {
+			got = out.Item.ID
+		}
+		now := o.now().UTC()
+		w, we := o.store.BeginWriteTx(ctx)
+		if we != nil {
+			return we
+		}
+		if callErr == nil {
+			if got != "" && got != in.id {
+				log.Printf("[ops-sync] intake %s returned %s, expected %s", in.key, got, in.id)
+			}
+			_, we = w.Exec(`UPDATE ops_intake_pending SET done_at=?,last_error='' WHERE intake_key=?`, now.Format(time.RFC3339Nano), in.key)
+		} else {
+			n := in.attempts + 1
+			backoff := time.Duration(1<<min(n, 7)) * 5 * time.Second // 10s .. ~10m
+			_, we = w.Exec(`UPDATE ops_intake_pending SET attempts=?,next_at=?,last_error=? WHERE intake_key=?`, n, now.Add(backoff).Format(time.RFC3339Nano), truncate(callErr.Error(), 300), in.key)
+			if !errors.Is(callErr, errOpsUnavailable) {
+				errs = append(errs, fmt.Errorf("intake %s: %w", in.key, callErr))
+			}
+		}
+		if we == nil {
+			we = w.Commit()
+		} else {
+			w.Rollback()
+		}
+		if we != nil {
+			return we
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// attempt runs one intake for a pending task. Inheritance is re-checked first: a
-// parent or an Ops link may have supplied an id in the meantime.
-func (o *OpsSync) attempt(ctx context.Context, taskID string) (OpsLinkResult, error) {
-	var key, title, project string
-	var attempts int
-	e := o.store.ReadDB().QueryRowContext(ctx, `SELECT intake_key,title,project_id,attempts FROM ops_intake_pending WHERE task_id=?`, taskID).Scan(&key, &title, &project, &attempts)
-	if errors.Is(e, sql.ErrNoRows) {
-		return OpsLinkResult{}, nil
-	}
-	if e != nil {
-		return OpsLinkResult{}, e
-	}
-	if t, ge := o.store.GetTask(taskID); ge == nil {
-		if id := OpsIDOf(t); id != "" {
-			res := OpsLinkResult{OpsID: id, Source: "self", From: taskID}
-			return res, o.stamp(ctx, taskID, res)
-		}
-	}
-	args := map[string]any{
-		"intake_key":      key,
-		"title":           truncate(title, 200),
-		"source":          "torque_auto",
-		"origin":          map[string]any{"kind": "torque.task", "id": taskID},
-		"idempotency_key": "torque-intake-" + key,
-	}
-	if project != "" {
-		args["project"] = project
-	}
-	var out struct {
-		ID   string `json:"id"`
-		Item struct {
-			ID string `json:"id"`
-		} `json:"item"`
-	}
-	callErr := o.call(ctx, "item_intake", taskID, args, &out)
-	id := out.ID
-	if id == "" {
-		id = out.Item.ID
-	}
-	if callErr == nil && opsSlug.MatchString(id) {
-		res := OpsLinkResult{OpsID: id, Source: "intake", From: key}
-		return res, o.stamp(ctx, taskID, res)
-	}
-	msg := "invalid_item_id"
-	if callErr != nil {
-		msg = truncate(callErr.Error(), 300)
-	}
-	attempts++
-	backoff := time.Duration(1<<min(attempts, 7)) * 5 * time.Second // 10s .. ~10m
-	w, we := o.store.BeginWriteTx(ctx)
-	if we != nil {
-		return OpsLinkResult{}, we
-	}
-	defer w.Rollback()
-	if _, we = w.Exec(`UPDATE ops_intake_pending SET attempts=?,next_at=?,last_error=? WHERE task_id=?`, attempts, o.now().Add(backoff).UTC().Format(time.RFC3339Nano), msg, taskID); we != nil {
-		return OpsLinkResult{}, we
-	}
-	if we = w.Commit(); we != nil {
-		return OpsLinkResult{}, we
-	}
-	return OpsLinkResult{Source: "pending", From: key}, fmt.Errorf("%w: %s", errOpsUnavailable, msg)
 }
 
 // opsToolError is a tool-level refusal (isError) from the Ops service.
@@ -495,105 +509,4 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
-}
-
-// opsTaskStatus maps a Torque task transition to the ops/v2 status state and kind
-// (design 5.2: Torque posts task_started, task_review, task_done, task_blocked).
-// Run and unit lifecycle events are not posted: the task transition carries them,
-// and posting both produced duplicate "started" entries.
-func opsTaskStatus(to string) (state, kind string) {
-	switch to {
-	case "doing":
-		return "started", "task_started"
-	case "review":
-		return "note", "task_review"
-	case "done":
-		return "done", "task_done"
-	case "blocked":
-		return "blocked", "task_blocked"
-	case "cancelled":
-		return "note", "task_cancelled"
-	}
-	return "", ""
-}
-
-// deliverOps posts one task transition to the Ops service. The arguments are
-// sealed before the call, so a retry after a lost response is byte-identical and
-// the idempotency key (the outbox event id) dedupes it at Ops.
-func (d *DispatchSync) deliverOps(ctx context.Context, entry sqlstore.OutboxEvent) error {
-	ev := entry.Event
-	if ev.Kind != catalog.KindTaskStateChanged {
-		return nil
-	}
-	var p struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-	}
-	if e := json.Unmarshal(ev.Payload, &p); e != nil {
-		return e
-	}
-	state, kind := opsTaskStatus(p.To)
-	if state == "" {
-		return nil
-	}
-	t, e := d.store.GetTask(ev.Scope.TaskID)
-	if errors.Is(e, sqlstore.ErrTaskNotFound) {
-		return nil
-	}
-	if e != nil {
-		return e
-	}
-	// G1 on the transition path: hand-started agents move tasks to doing without
-	// a dispatch, so link here too (inherit now, intake in the background).
-	if OpsIDOf(t) == "" {
-		if _, le := d.ops.Link(ctx, t.ID, false); le == nil {
-			if fresh, ge := d.store.GetTask(t.ID); ge == nil {
-				t = fresh
-			}
-		}
-	}
-	args := map[string]any{
-		"task":            t.ID,
-		"state":           state,
-		"kind":            kind,
-		"summary":         truncate(fmt.Sprintf("%s %s: %s", t.ID, p.To, t.Title), 500),
-		"ref":             "torque://task/" + t.ID,
-		"idempotency_key": "torque-status-" + ev.ID,
-	}
-	body := fmt.Sprintf("Torque task %s moved %s -> %s.", t.ID, p.From, p.To)
-	if p.To == "blocked" && t.BlockedReason != "" {
-		body += " Blocked: " + truncate(t.BlockedReason, 1000)
-	}
-	if ev.Scope.RunID != "" {
-		body += " Run " + ev.Scope.RunID + "."
-	}
-	args["body"] = body
-	if id := OpsIDOf(t); id != "" {
-		args["ops_id"] = id
-	}
-	m := taskMetadata(t)
-	if ws, _ := m["workstream_id"].(string); canonicalWorkstream.MatchString(ws) {
-		args["workstream_id"] = ws
-	} else if r, re := d.store.DispatchWorkstream(ctx, t.ID); re == nil && canonicalWorkstream.MatchString(r.ID) {
-		args["workstream_id"] = r.ID
-	}
-	raw, e := json.Marshal(args)
-	if e != nil {
-		return e
-	}
-	raw, e = d.store.SealDispatchStatus(ctx, ev.ID, raw)
-	if e != nil {
-		return e
-	}
-	return d.ops.postStatus(ctx, raw)
-}
-
-// postStatus sends sealed status_post arguments to the Ops service.
-func (o *OpsSync) postStatus(ctx context.Context, raw []byte) error {
-	var args map[string]any
-	if e := json.Unmarshal(raw, &args); e != nil {
-		return e
-	}
-	task, _ := args["task"].(string)
-	return o.call(ctx, "status_post", task, args, nil)
 }
