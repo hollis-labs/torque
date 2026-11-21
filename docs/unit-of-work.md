@@ -352,10 +352,14 @@ reported as a cursor gap, never silently skipped. Disabling the writer does not
 remove its cursor or pending records; retention remains pinned until an
 operator explicitly retires that consumer or delivery resumes.
 
-Launcher correlation registration belongs to CW-20261121-0030. Tether's local
-workstream reconciliation and compaction lineage require a coordinated Tether
-change; this Torque client does not alter that store, deploy a service, or mint
-credentials.
+Launcher correlation registration belongs to CW-20261121-0030. The reconciliation
+and compaction-lineage design is already documented in
+[Tether PR #637](https://github.com/hollis-labs/tether/pull/637), merged as
+`7acc42a3b8bbaa76b326eb7780aa895f466c6135`. That plan preserves historical joins
+while new dispatches carry Registry references. Its historical Registry holds
+are superseded by the live ensure contract from CW-20261120-0090; its Tether
+store/lineage migration remains a separate implementation boundary. This Torque
+client does not alter that store, deploy a service, or mint credentials.
 
 ### Tether binding boundary
 
