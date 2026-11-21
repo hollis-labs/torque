@@ -78,7 +78,7 @@ func (s *Store) SaveDispatchWorkstream(ctx context.Context, r DispatchWorkstream
 		return err
 	}
 	defer w.Rollback()
-	res, err := w.tx.Exec(`UPDATE dispatch_workstreams SET canonical_id=?,state=?,attempts=attempts+1,last_error=?,registry_project=?,namespace_project=? WHERE task_id=? AND logical_key=? AND project_id=? AND (state<>'closed' OR ?='closed')`, r.ID, r.State, r.LastError, r.RegistryProject, r.NamespaceProject, r.TaskID, r.Key, r.ProjectID, r.State)
+	res, err := w.tx.Exec(`UPDATE dispatch_workstreams SET canonical_id=CASE WHEN canonical_id<>'' THEN canonical_id ELSE ? END,state=?,attempts=attempts+1,last_error=?,registry_project=?,namespace_project=? WHERE task_id=? AND logical_key=? AND project_id=? AND (state<>'closed' OR ?='closed')`, r.ID, r.State, r.LastError, r.RegistryProject, r.NamespaceProject, r.TaskID, r.Key, r.ProjectID, r.State)
 	if err != nil {
 		return err
 	}
@@ -89,6 +89,10 @@ func (s *Store) SaveDispatchWorkstream(ctx context.Context, r DispatchWorkstream
 			return ErrDispatchWorkstreamClosed
 		}
 		return fmt.Errorf("dispatch workstream binding changed")
+	}
+	// A stale outage response must preserve a canonical ID learned meanwhile.
+	if err = w.tx.QueryRow(`SELECT canonical_id FROM dispatch_workstreams WHERE task_id=? AND logical_key=? AND project_id=?`, r.TaskID, r.Key, r.ProjectID).Scan(&r.ID); err != nil {
+		return err
 	}
 	stamp, _ := json.Marshal(map[string]any{"key": r.Key, "id": r.ID, "state": r.State, "last_error": r.LastError})
 	_, err = w.tx.Exec(`UPDATE tasks SET metadata=json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END,'$.dispatch_workstream',json(?),'$.workstream_id',?) WHERE id=? AND EXISTS(SELECT 1 FROM dispatch_workstreams WHERE task_id=? AND logical_key=? AND project_id=? AND active=1)`, string(stamp), r.ID, r.TaskID, r.TaskID, r.Key, r.ProjectID)

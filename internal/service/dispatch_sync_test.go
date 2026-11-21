@@ -650,3 +650,22 @@ func TestDispatchClosedLedgerRejectsStalePendingSave(t *testing.T) {
 	require.ErrorIs(t, svc.Store().SaveDispatchWorkstream(context.Background(), old), sqlstore.ErrDispatchWorkstreamClosed)
 	require.Equal(t, "closed", taskMeta(t, svc, rec.ID)["dispatch_workstream"].(map[string]any)["state"])
 }
+
+func TestDispatchStaleOutageSavePreservesLearnedCanonicalID(t *testing.T) {
+	svc := setupService(t)
+	f := newIdentityFixture(t)
+	f.registryDown = true
+	d := syncFixture(t, svc, f)
+	rec, e := svc.Task.Create(service.TaskCreateInput{Title: "learned ID"})
+	require.NoError(t, e)
+	require.NoError(t, d.Prepare(context.Background(), rec))
+	stale, e := svc.Store().DispatchWorkstream(context.Background(), rec.ID)
+	require.NoError(t, e)
+	require.Empty(t, stale.ID)
+	f.set(func() { f.registryDown = false })
+	require.NoError(t, d.Prepare(context.Background(), rec))
+	stale.State = "pending"
+	stale.LastError = "unavailable"
+	require.NoError(t, svc.Store().SaveDispatchWorkstream(context.Background(), stale))
+	require.Equal(t, registryID, taskMeta(t, svc, rec.ID)["workstream_id"])
+}
