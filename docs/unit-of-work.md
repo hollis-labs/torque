@@ -406,3 +406,52 @@ and is not a substitute for Registry-owned identity. The merged reconciliation
 plan remains PR #637. This PR's gated wire behavior is tested against a fake
 Tether; production propagation awaits 0030. Formation snapshots, including the
 flag's emitted fields, remain unchanged across ambiguous retries.
+
+## Ops system of record (ops/v2)
+
+Contract: `caster://ops/design.system-of-record-v2` (Registry `document:arch.ops-system-of-record`).
+Enable with the serve-process settings below. With Ops on, Torque posts task status
+to the Ops service only; a configured Tesseract endpoint just drains bodies that
+were sealed for it before the switch.
+
+| Setting | Meaning |
+| --- | --- |
+| `TORQUE_OPS_URL` | Ops service origin (MCP at `/mcp`), e.g. `http://127.0.0.1:8994` |
+| `TORQUE_OPS_TOKEN_FILE` | Required with the URL; Ops operator credential file, re-read on every call |
+| `TORQUE_OPS_ACTOR` | Stated actor (`X-Actor`); default `msg://service/torque/dispatcher` |
+
+**Every task has an Ops item (G1, CW-20261121-0146).** The item id lives in
+`metadata.ops_id` (authoritative) and in `metadata.workstream_id` until a
+canonical Registry id replaces it there; `metadata.ops_link` records `source`
+(`self`, `parent`, `plan`, `intake`, `pending`) and `from`. A task without one
+inherits from its parent chain (plans are parents of their phase tasks);
+otherwise Torque calls `item_intake` with `intake_key = torque:<epic id or task id>`,
+`source: torque_auto`. Creates are never refused. An intake that cannot complete
+waits in `ops_intake_pending` and is retried with backoff (10 s to about 10 min).
+New tasks from every create path are found by a scan of new rows; tasks that
+predate the switch are linked when they next move to doing or are dispatched.
+The Registry ensure key is the Ops item id; with Ops on, Torque never mints a
+per-task Registry workstream.
+
+**Task status goes to Ops (G2, CW-20261121-0147).** Each task transition to
+doing, review, done, blocked or cancelled is posted to `status_post` as
+`task_started`, `task_review`, `task_done`, `task_blocked` or `task_cancelled`,
+with `task`, `ops_id`, the canonical `workstream_id` when bound, and
+`ref: torque://task/<id>`. Arguments are sealed before sending and keyed on the
+outbox event id, so retries are identical. Run and unit lifecycle events are not
+posted; the task transition carries them.
+
+**Assignments expire with their holder (G6, CW-20261121-0148).** The typed task
+record (MCP `format=typed`, HTTP task responses) carries a top-level
+`assignment` object, null when the task was never assigned:
+`assignee_urn, assignee_name, tether_session_id, team_run_id, claim_id,
+source (owner|doing|claim|dispatch), state (active|expired|released),
+assigned_at, lease_expires_at, ended_at, end_reason
+(session_ended|lease_lapsed|released|done)`. Torque records unit team runs
+(lease = unit deadline), runs bound to a Tether session, and workstream claims;
+`metadata.owner_urn` is projected as `source: owner`. Every 30 s it releases
+assignments whose task finished and expires those whose team run failed,
+whose session ended (Tether `GET /sessions/{id}`), or whose lease lapsed. An
+expired row keeps its holder, gets a task comment, and is posted to Ops as
+`assignment_expired`. `source: doing` (the caller who moved the task) needs the
+gateway to forward caller identity and is not recorded yet.

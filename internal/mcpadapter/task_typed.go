@@ -381,7 +381,19 @@ func (a *Adapter) typedTaskFullResult(task *sqlstore.TaskRecord) (typedTaskRecor
 		}
 		collectionName = names[task.CollectionID.String]
 	}
-	return typedTaskFull(task, tags, deps, agg, subs, collectionName), nil
+	rec := typedTaskFull(task, tags, deps, agg, subs, collectionName)
+	// G6 (CW-20261121-0148): who holds the task; null when never assigned.
+	rec["assignment"] = nil
+	if a.svc.Assignment != nil {
+		asg, err := a.svc.Assignment.Get(task)
+		if err != nil {
+			return nil, argErrorFromService(err)
+		}
+		if asg != nil {
+			rec["assignment"] = asg.View()
+		}
+	}
+	return rec, nil
 }
 
 func (a *Adapter) typedTaskListItem(t sqlstore.TaskRecord, full bool) (any, error) {
